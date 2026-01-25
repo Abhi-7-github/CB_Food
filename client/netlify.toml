@@ -1,0 +1,12 @@
+
+
+[build]
+  base = "client"
+  command = "npm run build"
+  publish = "dist"
+
+# SPA routing: send all non-file requests to index.html
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
