@@ -4,6 +4,7 @@ import { getCloudinary } from '../config/cloudinary.js'
 import { Order } from '../models/Order.js'
 import { broadcastAdminEvent } from '../realtime/adminSse.js'
 import { broadcastPublicEvent } from '../realtime/publicSse.js'
+import { isAdminRequest } from '../middleware/requireAdmin.js'
 
 export const ordersRouter = express.Router()
 
@@ -20,6 +21,11 @@ const upload = multer({
 
 function asTrimmedString(value) {
   return String(value ?? '').trim()
+}
+
+function getClientUserId(req) {
+  const header = req.header('x-client-user-id')
+  return asTrimmedString(header)
 }
 
 async function uploadToCloudinaryStream({ buffer, folder }) {
@@ -48,7 +54,17 @@ ordersRouter.get('/', async (req, res, next) => {
     const cursorRaw = asTrimmedString(req.query.cursor)
     const cursor = cursorRaw ? new Date(cursorRaw) : null
 
-    const filter = cursor && !Number.isNaN(cursor.getTime()) ? { createdAt: { $lt: cursor } } : {}
+    const cursorFilter = cursor && !Number.isNaN(cursor.getTime()) ? { createdAt: { $lt: cursor } } : {}
+
+    let filter = cursorFilter
+
+    if (!isAdminRequest(req)) {
+      const clientUserId = getClientUserId(req)
+      if (!clientUserId) {
+        return res.status(400).json({ error: 'x-client-user-id header is required' })
+      }
+      filter = { ...cursorFilter, clientUserId }
+    }
 
     const orders = await Order.find(filter).sort({ createdAt: -1 }).limit(limit).lean()
 
@@ -86,6 +102,7 @@ ordersRouter.get('/', async (req, res, next) => {
 // file: paymentScreenshot
 ordersRouter.post('/', upload.single('paymentScreenshot'), async (req, res, next) => {
   try {
+    const clientUserId = getClientUserId(req)
     const teamName = asTrimmedString(req.body.teamName)
     const leaderName = asTrimmedString(req.body.leaderName)
     const phone = asTrimmedString(req.body.phone)
@@ -102,6 +119,10 @@ ordersRouter.post('/', upload.single('paymentScreenshot'), async (req, res, next
 
     if (!transactionId) {
       return res.status(400).json({ error: 'Transaction ID is required' })
+    }
+
+    if (!clientUserId) {
+      return res.status(400).json({ error: 'x-client-user-id header is required' })
     }
 
     if (!req.file) {
@@ -132,6 +153,7 @@ ordersRouter.post('/', upload.single('paymentScreenshot'), async (req, res, next
     }
 
     const order = await Order.create({
+      clientUserId,
       status: 'Placed',
       rejectionReason: '',
       team: { teamName, leaderName, phone, email },

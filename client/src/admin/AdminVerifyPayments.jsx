@@ -24,7 +24,7 @@ export default function AdminVerifyPayments({ adminKey }) {
     setLoading(true)
     setError('')
     try {
-      const page = await getOrdersPage({ limit: 200 })
+      const page = await getOrdersPage({ limit: 200, adminKey })
       setOrders(page.orders)
       setNextCursor(page.nextCursor)
     } catch (e) {
@@ -41,7 +41,7 @@ export default function AdminVerifyPayments({ adminKey }) {
     setLoadingMore(true)
     setError('')
     try {
-      const page = await getOrdersPage({ cursor: nextCursor, limit: 200 })
+      const page = await getOrdersPage({ cursor: nextCursor, limit: 200, adminKey })
       setOrders((prev) => {
         const seen = new Set(prev.map((o) => String(o.id)))
         const merged = [...prev]

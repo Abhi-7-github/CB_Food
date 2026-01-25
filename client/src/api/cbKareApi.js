@@ -2,6 +2,26 @@ const RAW_BASE = import.meta.env.VITE_API_BASE_URL
 
 const API_BASE = typeof RAW_BASE === 'string' ? RAW_BASE.replace(/\/$/, '') : ''
 
+const CLIENT_USER_ID_KEY = 'cbkare.userId'
+
+function getClientUserId() {
+  if (typeof window === 'undefined') return ''
+
+  try {
+    const existing = window.localStorage.getItem(CLIENT_USER_ID_KEY)
+    if (typeof existing === 'string' && existing.trim()) return existing
+
+    const next = (window.crypto && typeof window.crypto.randomUUID === 'function')
+      ? window.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+    window.localStorage.setItem(CLIENT_USER_ID_KEY, next)
+    return next
+  } catch {
+    return ''
+  }
+}
+
 function buildUrl(path) {
   return API_BASE ? `${API_BASE}${path}` : path
 }
@@ -34,14 +54,23 @@ export async function getOrders() {
   return page.orders
 }
 
-export async function getOrdersPage({ cursor, limit } = {}) {
+export async function getOrdersPage({ cursor, limit, adminKey } = {}) {
   const qs = new URLSearchParams()
   if (typeof cursor === 'string' && cursor.trim()) qs.set('cursor', cursor.trim())
   if (Number.isFinite(Number(limit))) qs.set('limit', String(Number(limit)))
 
   const query = qs.toString()
   const url = buildUrl(`/api/orders${query ? `?${query}` : ''}`)
-  const res = await fetch(url)
+
+  const headers = {}
+  const admin = typeof adminKey === 'string' ? adminKey.trim() : ''
+  if (admin) {
+    headers['x-admin-key'] = admin
+  } else {
+    headers['x-client-user-id'] = getClientUserId()
+  }
+
+  const res = await fetch(url, { headers })
 
   const contentType = res.headers.get('content-type') || ''
   const isJson = contentType.includes('application/json')
@@ -88,6 +117,9 @@ export async function createOrder({
 
   return apiFetch('/api/orders', {
     method: 'POST',
+    headers: {
+      'x-client-user-id': getClientUserId(),
+    },
     body: fd,
   })
 

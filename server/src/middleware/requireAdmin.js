@@ -14,6 +14,19 @@ function extractToken(req) {
   return m ? m[1] : ''
 }
 
+export function isAdminRequest(req) {
+  const expected = process.env.ADMIN_API_KEY
+  if (!expected) return false
+
+  const token = extractToken(req)
+  const a = Buffer.from(String(token ?? ''), 'utf8')
+  const b = Buffer.from(String(expected ?? ''), 'utf8')
+  const sameLength = a.length === b.length
+  const ok = sameLength && crypto.timingSafeEqual(a, b)
+
+  return Boolean(token) && ok
+}
+
 export function requireAdmin(req, res, next) {
   const expected = process.env.ADMIN_API_KEY
   if (!expected) {
