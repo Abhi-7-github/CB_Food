@@ -154,6 +154,7 @@ function OrderPage({ foods = [], cart, setCart }) {
     else if (!isValidEmail(draft.email)) nextErrors.email = 'Enter a valid email'
     if (cartItems.length === 0) nextErrors.cart = 'Your cart is empty'
     else if (cartItems.some((it) => it?.isActive === false)) nextErrors.cart = 'Remove inactive items from cart to continue'
+    else if (Number(totalItems) > 10) nextErrors.cart = 'Maximum 10 total items allowed per order'
     return nextErrors
   }
 

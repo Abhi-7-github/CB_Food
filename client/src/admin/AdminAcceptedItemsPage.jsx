@@ -47,14 +47,25 @@ export default function AdminAcceptedItemsPage({ adminKey }) {
     const es = new EventSource(`/api/admin/stream?key=${encodeURIComponent(key)}`)
 
     let timer = null
-    const scheduleReload = () => {
+    const scheduleReload = (ev) => {
+      // Accepted-items summary changes only when an order status changes.
+      // Ignore updates that only touch payment upload state.
+      if (ev?.data) {
+        try {
+          const payload = JSON.parse(ev.data)
+          const status = String(payload?.status || '')
+          if (!status || status === 'Placed') return
+        } catch {
+          // If parsing fails, fall back to a safe refetch.
+        }
+      }
+
       if (timer) window.clearTimeout(timer)
       timer = window.setTimeout(() => {
         load()
       }, 350)
     }
 
-    es.addEventListener('orderCreated', scheduleReload)
     es.addEventListener('orderUpdated', scheduleReload)
 
     es.onerror = () => {

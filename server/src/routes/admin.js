@@ -487,7 +487,9 @@ adminRouter.patch('/orders/:id/status', requireAdmin, express.json(), async (req
     broadcastPublicEvent('ordersChanged', {
       action: 'statusUpdated',
       id: String(updated._id),
+      clientUserId: String(updated.clientUserId || ''),
       status: updated.status,
+      rejectionReason: updated.rejectionReason,
       at: new Date().toISOString(),
     })
 

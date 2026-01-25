@@ -22,6 +22,10 @@ function getClientUserId() {
   }
 }
 
+export function getOrCreateClientUserId() {
+  return getClientUserId()
+}
+
 function buildUrl(path) {
   return API_BASE ? `${API_BASE}${path}` : path
 }

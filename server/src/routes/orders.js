@@ -23,6 +23,8 @@ function asTrimmedString(value) {
   return String(value ?? '').trim()
 }
 
+const MAX_TOTAL_ITEMS_PER_ORDER = 10
+
 function getClientUserId(req) {
   const header = req.header('x-client-user-id')
   return asTrimmedString(header)
@@ -141,6 +143,8 @@ ordersRouter.post('/', upload.single('paymentScreenshot'), async (req, res, next
       return res.status(400).json({ error: 'items must contain 1 to 100 entries' })
     }
 
+    let computedTotalItems = 0
+
     for (const it of items) {
       const id = asTrimmedString(it?.id ?? it?.clientId)
       const name = asTrimmedString(it?.name)
@@ -150,6 +154,14 @@ ordersRouter.post('/', upload.single('paymentScreenshot'), async (req, res, next
       if (!id || !name) return res.status(400).json({ error: 'Each item must have id and name' })
       if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: 'Each item must have a valid price' })
       if (!Number.isFinite(qty) || qty < 1 || qty > 50) return res.status(400).json({ error: 'Each item must have quantity 1 to 50' })
+
+      computedTotalItems += qty
+    }
+
+    if (computedTotalItems > MAX_TOTAL_ITEMS_PER_ORDER) {
+      return res.status(400).json({
+        error: `Maximum ${MAX_TOTAL_ITEMS_PER_ORDER} total items allowed per order`,
+      })
     }
 
     const order = await Order.create({
@@ -173,7 +185,8 @@ ordersRouter.post('/', upload.single('paymentScreenshot'), async (req, res, next
         quantity: Number(i.quantity),
       })),
       subtotal: Number.isFinite(subtotal) ? subtotal : 0,
-      totalItems: Number.isFinite(totalItems) ? totalItems : 0,
+      // Don't trust client-provided totalItems; compute it from validated items.
+      totalItems: computedTotalItems,
     })
 
     const createdPayload = {
@@ -196,6 +209,15 @@ ordersRouter.post('/', upload.single('paymentScreenshot'), async (req, res, next
     }
 
     broadcastAdminEvent('orderCreated', createdPayload)
+
+    // Let clients refresh their own orders without causing every connected user to refetch.
+    broadcastPublicEvent('ordersChanged', {
+      action: 'orderCreated',
+      id: String(order._id),
+      clientUserId,
+      status: order.status,
+      at: new Date().toISOString(),
+    })
 
     // New orders can affect bestseller ranking; prompt clients to refresh foods.
     broadcastPublicEvent('foodsChanged', {

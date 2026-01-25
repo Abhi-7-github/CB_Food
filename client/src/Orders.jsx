@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getOrders } from './api/cbKareApi.js'
+import { getOrders, getOrCreateClientUserId } from './api/cbKareApi.js'
 
 function formatPrice(value) {
   return `₹${value}`
@@ -70,8 +70,31 @@ export default function Orders() {
 
     const es = new EventSource(url)
 
+    const myUserId = getOrCreateClientUserId()
+
     let timer = null
-    const scheduleReload = () => {
+    const scheduleReload = (ev) => {
+      // If the server provides a clientUserId, only refetch for your own updates.
+      // This prevents every connected user from hammering /api/orders on any update.
+      if (ev?.data) {
+        try {
+          const payload = JSON.parse(ev.data)
+          const targetUserId = String(payload?.clientUserId || '')
+          if (targetUserId && myUserId && targetUserId !== myUserId) return
+
+          // For status updates we can patch state without a refetch.
+          if (String(payload?.action || '') === 'statusUpdated' && payload?.id) {
+            const id = String(payload.id)
+            const nextStatus = String(payload?.status || '')
+            const nextReason = String(payload?.rejectionReason || '')
+            setOrders((prev) => prev.map((o) => (String(o.id) === id ? { ...o, status: nextStatus || o.status, rejectionReason: nextReason } : o)))
+            return
+          }
+        } catch {
+          // ignore; fallback to refetch
+        }
+      }
+
       if (timer) window.clearTimeout(timer)
       timer = window.setTimeout(async () => {
         try {

@@ -49,8 +49,11 @@ export function createApp() {
     limit: Number(process.env.RATE_LIMIT_API || 300),
     standardHeaders: 'draft-7',
     legacyHeaders: false,
-    // SSE connections can reconnect rapidly on flaky networks; don't 429 the stream.
-    skip: (req) => req.path === '/stream',
+    // This limiter is mounted at /api, so stream paths look like:
+    // - /stream
+    // - /admin/stream
+    // SSE reconnects can be bursty; don't 429 the streams.
+    skip: (req) => req.path === '/stream' || req.path === '/admin/stream',
   })
 
   const adminLimiter = rateLimit({
@@ -62,8 +65,9 @@ export function createApp() {
     skip: (req) => req.path === '/stream',
   })
 
-  app.use('/api', apiLimiter)
+  // IMPORTANT: mount /api/admin before /api so admin requests don't get rate-limited twice.
   app.use('/api/admin', adminLimiter)
+  app.use('/api', apiLimiter)
 
   app.get('/health', (req, res) => {
     res.json({ ok: true, service: 'cb-kare-food-portal-server' })
