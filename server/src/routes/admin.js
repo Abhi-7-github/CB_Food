@@ -8,6 +8,7 @@ import { PaymentQr } from '../models/PaymentQr.js'
 import { getCloudinary } from '../config/cloudinary.js'
 import { addAdminSseClient, broadcastAdminEvent } from '../realtime/adminSse.js'
 import { broadcastPublicEvent } from '../realtime/publicSse.js'
+import { sendOrderRejectedEmail, sendOrderVerifiedEmail } from '../email/mailer.js'
 
 export const adminRouter = express.Router()
 
@@ -451,16 +452,45 @@ adminRouter.patch('/orders/:id/status', requireAdmin, express.json(), async (req
     if (!allowed.has(status)) return res.status(400).json({ error: 'Invalid status' })
     if (status === 'Rejected' && !reason) return res.status(400).json({ error: 'Rejection reason is required' })
 
-    const updated = await Order.findByIdAndUpdate(
-      id,
-      {
-        $set: {
-          status,
-          rejectionReason: status === 'Rejected' ? reason : '',
+    // Email rule:
+    // - Only ONE email when admin finalizes decision: Placed -> Verified OR Placed -> Rejected
+    // - Never send email for Placed or Delivered
+    // Duplicate protection is enforced by only updating when current status is Placed.
+    const isFinalDecision = status === 'Verified' || status === 'Rejected'
+
+    let updated = null
+    let shouldSendDecisionEmail = false
+
+    if (isFinalDecision) {
+      updated = await Order.findOneAndUpdate(
+        { _id: id, status: 'Placed' },
+        {
+          $set: {
+            status,
+            rejectionReason: status === 'Rejected' ? reason : '',
+          },
         },
-      },
-      { new: true }
-    ).lean()
+        { new: true }
+      ).lean()
+
+      if (updated) {
+        shouldSendDecisionEmail = true
+      } else {
+        // Already finalized (Verified/Rejected/Delivered) or not found.
+        updated = await Order.findById(id).lean()
+      }
+    } else {
+      updated = await Order.findByIdAndUpdate(
+        id,
+        {
+          $set: {
+            status,
+            rejectionReason: status === 'Rejected' ? reason : '',
+          },
+        },
+        { new: true }
+      ).lean()
+    }
 
     if (!updated) return res.status(404).json({ error: 'Order not found' })
 
@@ -501,6 +531,17 @@ adminRouter.patch('/orders/:id/status', requireAdmin, express.json(), async (req
       at: new Date().toISOString(),
     })
     res.json(payload)
+
+    // Send email only for admin's final decision (Verified/Rejected), and only once.
+    if (shouldSendDecisionEmail) {
+      setImmediate(() => {
+        if (status === 'Verified') {
+          sendOrderVerifiedEmail(updated).catch((err) => console.error('[mail] verified email failed:', err))
+        } else if (status === 'Rejected') {
+          sendOrderRejectedEmail(updated).catch((err) => console.error('[mail] rejection email failed:', err))
+        }
+      })
+    }
   } catch (err) {
     next(err)
   }
