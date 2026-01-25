@@ -17,6 +17,7 @@ export default function Navbar({ cartCount = 0, adminKey = '' }) {
         { id: 'admin-foods', label: 'Create Food' },
         { id: 'admin-manage', label: 'Foods List' },
         { id: 'admin-payments', label: 'Verify Payments' },
+        { id: 'admin-qrcodes', label: 'Upload QRCode' },
         { id: 'admin-accepted', label: 'Accepted Items' },
       ]
     }
@@ -45,6 +46,7 @@ export default function Navbar({ cartCount = 0, adminKey = '' }) {
     if (id === 'admin-foods') return '/admin/foods'
     if (id === 'admin-manage') return '/admin/manage'
     if (id === 'admin-payments') return '/admin/payments'
+    if (id === 'admin-qrcodes') return '/admin/qrcodes'
     if (id === 'admin-accepted') return '/admin/accepted'
     if (id === 'home') return '/'
     if (id === 'orders') return '/orders'

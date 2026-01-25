@@ -221,3 +221,51 @@ export async function adminGetAcceptedItemsSummary({ adminKey }) {
     },
   })
 }
+
+export async function getActivePaymentQr() {
+  return apiFetch('/api/payment-qrs/active', {
+    method: 'GET',
+  })
+}
+
+export async function adminGetPaymentQrs({ adminKey }) {
+  return apiFetch('/api/admin/payment-qrs', {
+    method: 'GET',
+    headers: {
+      'x-admin-key': String(adminKey ?? ''),
+    },
+  })
+}
+
+export async function adminUploadPaymentQr({ adminKey, imageFile }) {
+  const fd = new FormData()
+  if (imageFile) fd.append('image', imageFile)
+
+  return apiFetch('/api/admin/payment-qrs', {
+    method: 'POST',
+    headers: {
+      'x-admin-key': String(adminKey ?? ''),
+    },
+    body: fd,
+  })
+}
+
+export async function adminSetPaymentQrActive({ adminKey, id, active }) {
+  return apiFetch(`/api/admin/payment-qrs/${encodeURIComponent(String(id))}/active`, {
+    method: 'PATCH',
+    headers: {
+      'content-type': 'application/json',
+      'x-admin-key': String(adminKey ?? ''),
+    },
+    body: JSON.stringify({ active: Boolean(active) }),
+  })
+}
+
+export async function adminDeletePaymentQr({ adminKey, id }) {
+  return apiFetch(`/api/admin/payment-qrs/${encodeURIComponent(String(id))}`, {
+    method: 'DELETE',
+    headers: {
+      'x-admin-key': String(adminKey ?? ''),
+    },
+  })
+}

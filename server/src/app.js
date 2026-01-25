@@ -5,6 +5,7 @@ import rateLimit from 'express-rate-limit'
 
 import { foodsRouter } from './routes/foods.js'
 import { ordersRouter } from './routes/orders.js'
+import { paymentQrsRouter } from './routes/paymentQrs.js'
 import { adminRouter } from './routes/admin.js'
 import { errorHandler, notFound } from './middleware/errorHandler.js'
 import { addPublicSseClient } from './realtime/publicSse.js'
@@ -71,6 +72,7 @@ export function createApp() {
 
   app.use('/api/foods', foodsRouter)
   app.use('/api/orders', ordersRouter)
+  app.use('/api/payment-qrs', paymentQrsRouter)
   app.use('/api/admin', adminRouter)
 
   app.use(notFound)

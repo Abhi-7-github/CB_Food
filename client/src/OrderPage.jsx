@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { createOrder } from './api/cbKareApi.js'
+import { createOrder, getActivePaymentQr } from './api/cbKareApi.js'
 import { useLocalStorageState } from './hooks/useLocalStorageState.js'
 import paymentQr from './assets/payment-qr.svg'
 
@@ -66,6 +66,47 @@ function OrderPage({ foods = [], cart, setCart }) {
   const [paymentScreenshotFile, setPaymentScreenshotFile] = useState(null)
   const [paymentScreenshotUrl, setPaymentScreenshotUrl] = useState('')
   const [paymentScreenshotInputKey, setPaymentScreenshotInputKey] = useState(0)
+
+  const [paymentQrUrl, setPaymentQrUrl] = useState(paymentQr)
+
+  const loadActiveQr = async () => {
+    try {
+      const res = await getActivePaymentQr()
+      const url = String(res?.imageUrl || '').trim()
+      setPaymentQrUrl(url || paymentQr)
+    } catch {
+      setPaymentQrUrl(paymentQr)
+    }
+  }
+
+  useEffect(() => {
+    loadActiveQr()
+
+    const baseRaw = import.meta.env.VITE_API_BASE_URL
+    const base = typeof baseRaw === 'string' ? baseRaw.replace(/\/$/, '') : ''
+    const url = base ? `${base}/api/stream` : '/api/stream'
+
+    const es = new EventSource(url)
+    let timer = null
+
+    const scheduleReload = () => {
+      if (timer) window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        loadActiveQr()
+      }, 250)
+    }
+
+    es.addEventListener('paymentQrChanged', scheduleReload)
+    es.onerror = () => {
+      // ignore; EventSource reconnects
+    }
+
+    return () => {
+      if (timer) window.clearTimeout(timer)
+      es.close()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const clearPaymentScreenshot = () => {
     setPaymentScreenshotFile(null)
@@ -289,7 +330,7 @@ function OrderPage({ foods = [], cart, setCart }) {
                 <div className="text-sm font-semibold">Scan QR Code</div>
                 <div className="mt-2 grid gap-3 sm:grid-cols-[160px_1fr] sm:items-start">
                   <img
-                    src={paymentQr}
+                    src={paymentQrUrl}
                     alt="Payment QR"
                     className="h-40 w-40 rounded-xl border border-slate-200 bg-white object-contain"
                   />

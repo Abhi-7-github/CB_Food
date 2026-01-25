@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import AdminCreateFood from './admin/AdminCreateFood.jsx'
 import AdminAcceptedItemsPage from './admin/AdminAcceptedItemsPage.jsx'
 import AdminManageFoods from './admin/AdminManageFoods.jsx'
+import AdminUploadQrcodes from './admin/AdminUploadQrcodes.jsx'
 import AdminVerifyPayments from './admin/AdminVerifyPayments.jsx'
 import { adminPing } from './api/cbKareApi.js'
 
@@ -90,6 +91,7 @@ export default function AdminPage({ adminKey, setAdminKey, onFoodsChanged }) {
               element={<AdminManageFoods adminKey={adminKey} onFoodsChanged={onFoodsChanged} />}
             />
             <Route path="payments" element={<AdminVerifyPayments adminKey={adminKey} />} />
+            <Route path="qrcodes" element={<AdminUploadQrcodes adminKey={adminKey} />} />
             <Route path="accepted" element={<AdminAcceptedItemsPage adminKey={adminKey} />} />
           </Routes>
         </div>

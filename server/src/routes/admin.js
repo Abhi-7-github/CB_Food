@@ -4,6 +4,7 @@ import multer from 'multer'
 import { requireAdmin } from '../middleware/requireAdmin.js'
 import { FoodItem } from '../models/FoodItem.js'
 import { Order } from '../models/Order.js'
+import { PaymentQr } from '../models/PaymentQr.js'
 import { getCloudinary } from '../config/cloudinary.js'
 import { addAdminSseClient, broadcastAdminEvent } from '../realtime/adminSse.js'
 import { broadcastPublicEvent } from '../realtime/publicSse.js'
@@ -90,6 +91,144 @@ async function uploadFoodImage({ buffer, mimeType }) {
     publicId: res.public_id,
   }
 }
+
+async function uploadPaymentQrImage({ buffer, mimeType }) {
+  const base64 = buffer.toString('base64')
+  const safeMime = String(mimeType || '').toLowerCase()
+  const dataUri = `data:${safeMime};base64,${base64}`
+
+  const cloudinary = getCloudinary()
+  const folderBase = process.env.CLOUDINARY_FOLDER || 'cb-kare-food-portal'
+
+  const res = await cloudinary.uploader.upload(dataUri, {
+    folder: `${folderBase}/payment-qrs`,
+    resource_type: 'image',
+  })
+
+  return {
+    url: res.secure_url,
+    publicId: res.public_id,
+  }
+}
+
+async function setSingleActivePaymentQr(idToActivate) {
+  const id = String(idToActivate || '').trim()
+  if (!id) throw new Error('payment qr id is required')
+
+  // Best-effort atomic: set all false, then set one true.
+  await PaymentQr.updateMany({}, { $set: { isActive: false } })
+  const updated = await PaymentQr.findByIdAndUpdate(id, { $set: { isActive: true } }, { new: true }).lean()
+  return updated
+}
+
+// GET /api/admin/payment-qrs
+adminRouter.get('/payment-qrs', requireAdmin, async (_req, res, next) => {
+  try {
+    const list = await PaymentQr.find({}).sort({ createdAt: -1 }).lean()
+    res.json(
+      list.map((q) => ({
+        id: String(q._id),
+        imageUrl: q.imageUrl,
+        isActive: Boolean(q.isActive),
+        createdAt: q.createdAt,
+        updatedAt: q.updatedAt,
+      }))
+    )
+  } catch (err) {
+    next(err)
+  }
+})
+
+// POST /api/admin/payment-qrs (multipart/form-data)
+// File: image
+adminRouter.post('/payment-qrs', requireAdmin, upload.single('image'), async (req, res, next) => {
+  try {
+    const count = await PaymentQr.countDocuments({})
+    if (count >= 4) return res.status(400).json({ error: 'Maximum 4 QR codes allowed. Delete one to upload more.' })
+    if (!req.file) return res.status(400).json({ error: 'image file is required' })
+
+    const uploaded = await uploadPaymentQrImage({ buffer: req.file.buffer, mimeType: req.file.mimetype })
+
+    const doc = await PaymentQr.create({
+      imageUrl: uploaded.url,
+      imagePublicId: uploaded.publicId,
+      isActive: false,
+    })
+
+    res.status(201).json({
+      id: String(doc._id),
+      imageUrl: doc.imageUrl,
+      isActive: Boolean(doc.isActive),
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+    })
+
+    broadcastAdminEvent('paymentQrChanged', { action: 'created', id: String(doc._id), at: new Date().toISOString() })
+    broadcastPublicEvent('paymentQrChanged', { action: 'created', id: String(doc._id), at: new Date().toISOString() })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// PATCH /api/admin/payment-qrs/:id/active
+// Body: { active: boolean }
+adminRouter.patch('/payment-qrs/:id/active', requireAdmin, express.json(), async (req, res, next) => {
+  try {
+    const id = asTrimmedString(req.params.id)
+    const activeParsed = asBool(req.body?.active)
+    if (!id) return res.status(400).json({ error: 'payment qr id is required' })
+    if (activeParsed === null) return res.status(400).json({ error: 'active must be true/false' })
+
+    let updated = null
+    if (activeParsed) {
+      updated = await setSingleActivePaymentQr(id)
+      if (!updated) return res.status(404).json({ error: 'Payment QR not found' })
+    } else {
+      updated = await PaymentQr.findByIdAndUpdate(id, { $set: { isActive: false } }, { new: true }).lean()
+      if (!updated) return res.status(404).json({ error: 'Payment QR not found' })
+    }
+
+    res.json({
+      id: String(updated._id),
+      imageUrl: updated.imageUrl,
+      isActive: Boolean(updated.isActive),
+      createdAt: updated.createdAt,
+      updatedAt: updated.updatedAt,
+    })
+
+    broadcastAdminEvent('paymentQrChanged', { action: 'activeChanged', id: String(updated._id), at: new Date().toISOString() })
+    broadcastPublicEvent('paymentQrChanged', { action: 'activeChanged', id: String(updated._id), at: new Date().toISOString() })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// DELETE /api/admin/payment-qrs/:id
+adminRouter.delete('/payment-qrs/:id', requireAdmin, async (req, res, next) => {
+  try {
+    const id = asTrimmedString(req.params.id)
+    if (!id) return res.status(400).json({ error: 'payment qr id is required' })
+
+    const deleted = await PaymentQr.findByIdAndDelete(id).lean()
+    if (!deleted) return res.status(404).json({ error: 'Payment QR not found' })
+
+    try {
+      const publicId = asTrimmedString(deleted.imagePublicId)
+      if (publicId) {
+        const cloudinary = getCloudinary()
+        await cloudinary.uploader.destroy(publicId, { resource_type: 'image' })
+      }
+    } catch {
+      // ignore
+    }
+
+    res.json({ ok: true, id })
+    broadcastAdminEvent('paymentQrChanged', { action: 'deleted', id, at: new Date().toISOString() })
+    broadcastPublicEvent('paymentQrChanged', { action: 'deleted', id, at: new Date().toISOString() })
+  } catch (err) {
+    next(err)
+  }
+})
 
 // POST /api/admin/foods
 // Supports JSON or multipart/form-data.
