@@ -1,0 +1,234 @@
+import express from 'express'
+import multer from 'multer'
+import { getCloudinary } from '../config/cloudinary.js'
+import { Order } from '../models/Order.js'
+import { broadcastAdminEvent } from '../realtime/adminSse.js'
+import { broadcastPublicEvent } from '../realtime/publicSse.js'
+
+export const ordersRouter = express.Router()
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB
+  },
+  fileFilter: (_req, file, cb) => {
+    if (file?.mimetype && file.mimetype.startsWith('image/')) return cb(null, true)
+    cb(new Error('Only image uploads are allowed'))
+  },
+})
+
+function asTrimmedString(value) {
+  return String(value ?? '').trim()
+}
+
+async function uploadToCloudinaryStream({ buffer, folder }) {
+  const cloudinary = getCloudinary()
+
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder,
+        resource_type: 'image',
+      },
+      (err, result) => {
+        if (err) return reject(err)
+        resolve({ url: result.secure_url, publicId: result.public_id })
+      }
+    )
+
+    stream.end(buffer)
+  })
+}
+
+// GET /api/orders
+ordersRouter.get('/', async (req, res, next) => {
+  try {
+    const limit = Math.min(Number(req.query.limit || 200), 200)
+    const cursorRaw = asTrimmedString(req.query.cursor)
+    const cursor = cursorRaw ? new Date(cursorRaw) : null
+
+    const filter = cursor && !Number.isNaN(cursor.getTime()) ? { createdAt: { $lt: cursor } } : {}
+
+    const orders = await Order.find(filter).sort({ createdAt: -1 }).limit(limit).lean()
+
+    if (orders.length > 0) {
+      res.set('X-Next-Cursor', new Date(orders[orders.length - 1].createdAt).toISOString())
+    }
+
+    res.json(
+      orders.map((o) => ({
+        id: o._id,
+        createdAt: o.createdAt,
+        status: o.status,
+        rejectionReason: o.rejectionReason,
+        team: o.team,
+        payment: {
+          method: o.payment?.method,
+          transactionId: o.payment?.transactionId,
+          screenshotUrl: o.payment?.screenshotUrl,
+          screenshotName: o.payment?.screenshotName,
+          uploadStatus: o.payment?.uploadStatus,
+          uploadError: o.payment?.uploadError,
+        },
+        items: o.items,
+        totalItems: o.totalItems,
+        subtotal: o.subtotal,
+      }))
+    )
+  } catch (err) {
+    next(err)
+  }
+})
+
+// POST /api/orders (multipart/form-data)
+// fields: teamName, leaderName, phone, email, transactionId, items(JSON), subtotal, totalItems
+// file: paymentScreenshot
+ordersRouter.post('/', upload.single('paymentScreenshot'), async (req, res, next) => {
+  try {
+    const teamName = asTrimmedString(req.body.teamName)
+    const leaderName = asTrimmedString(req.body.leaderName)
+    const phone = asTrimmedString(req.body.phone)
+    const email = asTrimmedString(req.body.email)
+    const transactionId = asTrimmedString(req.body.transactionId)
+
+    const itemsRaw = req.body.items
+    const subtotal = Number(req.body.subtotal)
+    const totalItems = Number(req.body.totalItems)
+
+    if (!teamName || !leaderName || !phone || !email) {
+      return res.status(400).json({ error: 'Missing required team fields' })
+    }
+
+    if (!transactionId) {
+      return res.status(400).json({ error: 'Transaction ID is required' })
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'paymentScreenshot is required' })
+    }
+
+    let items = []
+    try {
+      items = typeof itemsRaw === 'string' ? JSON.parse(itemsRaw) : itemsRaw
+      if (!Array.isArray(items)) throw new Error('items must be an array')
+    } catch {
+      return res.status(400).json({ error: 'Invalid items JSON' })
+    }
+
+    if (items.length < 1 || items.length > 100) {
+      return res.status(400).json({ error: 'items must contain 1 to 100 entries' })
+    }
+
+    for (const it of items) {
+      const id = asTrimmedString(it?.id ?? it?.clientId)
+      const name = asTrimmedString(it?.name)
+      const price = Number(it?.price)
+      const qty = Number(it?.quantity)
+
+      if (!id || !name) return res.status(400).json({ error: 'Each item must have id and name' })
+      if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: 'Each item must have a valid price' })
+      if (!Number.isFinite(qty) || qty < 1 || qty > 50) return res.status(400).json({ error: 'Each item must have quantity 1 to 50' })
+    }
+
+    const order = await Order.create({
+      status: 'Placed',
+      rejectionReason: '',
+      team: { teamName, leaderName, phone, email },
+      payment: {
+        method: 'QR',
+        transactionId,
+        screenshotUrl: '',
+        screenshotPublicId: '',
+        screenshotName: req.file.originalname,
+        uploadStatus: 'pending',
+        uploadError: '',
+      },
+      items: items.map((i) => ({
+        clientId: asTrimmedString(i.id ?? i.clientId),
+        name: asTrimmedString(i.name),
+        price: Number(i.price),
+        quantity: Number(i.quantity),
+      })),
+      subtotal: Number.isFinite(subtotal) ? subtotal : 0,
+      totalItems: Number.isFinite(totalItems) ? totalItems : 0,
+    })
+
+    const createdPayload = {
+      id: order._id,
+      createdAt: order.createdAt,
+      status: order.status,
+      rejectionReason: order.rejectionReason,
+      team: order.team,
+      payment: {
+        method: order.payment.method,
+        transactionId: order.payment.transactionId,
+        screenshotUrl: order.payment.screenshotUrl,
+        screenshotName: order.payment.screenshotName,
+        uploadStatus: order.payment.uploadStatus,
+        uploadError: order.payment.uploadError,
+      },
+      items: order.items,
+      subtotal: order.subtotal,
+      totalItems: order.totalItems,
+    }
+
+    broadcastAdminEvent('orderCreated', createdPayload)
+
+    // New orders can affect bestseller ranking; prompt clients to refresh foods.
+    broadcastPublicEvent('foodsChanged', {
+      action: 'orderCreated',
+      id: String(order._id),
+      at: new Date().toISOString(),
+    })
+
+    // Upload screenshot asynchronously so high concurrency doesn't block request latency.
+    const folder = process.env.CLOUDINARY_FOLDER || 'cb-kare-food-portal'
+    uploadToCloudinaryStream({ buffer: req.file.buffer, folder })
+      .then(async (uploaded) => {
+        await Order.updateOne(
+          { _id: order._id },
+          {
+            $set: {
+              'payment.screenshotUrl': uploaded.url,
+              'payment.screenshotPublicId': uploaded.publicId,
+              'payment.uploadStatus': 'uploaded',
+              'payment.uploadError': '',
+            },
+          }
+        )
+
+        broadcastAdminEvent('orderUpdated', {
+          id: order._id,
+          payment: {
+            screenshotUrl: uploaded.url,
+            uploadStatus: 'uploaded',
+            uploadError: '',
+          },
+        })
+      })
+      .catch(async (err) => {
+        await Order.updateOne(
+          { _id: order._id },
+          {
+            $set: {
+              'payment.uploadStatus': 'failed',
+              'payment.uploadError': asTrimmedString(err?.message || 'Upload failed'),
+            },
+          }
+        )
+
+        broadcastAdminEvent('orderUpdated', {
+          id: order._id,
+          payment: {
+            uploadStatus: 'failed',
+            uploadError: asTrimmedString(err?.message || 'Upload failed'),
+          },
+        })
+      })
+
+    res.status(202).json(createdPayload)
+  } catch (err) {
+    next(err)
+  }
+})

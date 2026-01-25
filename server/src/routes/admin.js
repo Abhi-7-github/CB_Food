@@ -1,0 +1,416 @@
+import express from 'express'
+import multer from 'multer'
+
+import { requireAdmin } from '../middleware/requireAdmin.js'
+import { FoodItem } from '../models/FoodItem.js'
+import { Order } from '../models/Order.js'
+import { getCloudinary } from '../config/cloudinary.js'
+import { addAdminSseClient, broadcastAdminEvent } from '../realtime/adminSse.js'
+import { broadcastPublicEvent } from '../realtime/publicSse.js'
+
+export const adminRouter = express.Router()
+
+// GET /api/admin/ping (auth check)
+adminRouter.get('/ping', requireAdmin, (req, res) => {
+  res.json({ ok: true })
+})
+
+// GET /api/admin/stream (SSE)
+adminRouter.get('/stream', requireAdmin, (req, res) => {
+  addAdminSseClient(req, res)
+})
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB
+  },
+  fileFilter: (_req, file, cb) => {
+    if (file?.mimetype && file.mimetype.startsWith('image/')) return cb(null, true)
+    cb(new Error('Only image uploads are allowed'))
+  },
+})
+
+function asTrimmedString(value) {
+  return String(value ?? '').trim()
+}
+
+function asBool(value) {
+  if (typeof value === 'boolean') return value
+  const v = String(value ?? '').trim().toLowerCase()
+  if (v === 'true' || v === '1' || v === 'yes') return true
+  if (v === 'false' || v === '0' || v === 'no') return false
+  return null
+}
+
+function slugify(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+async function generateUniqueClientIdFromName(name) {
+  const base = slugify(name) || 'item'
+
+  let candidate = base
+  for (let i = 0; i < 50; i += 1) {
+    // FoodItem.exists returns null/undefined when not found.
+    // eslint-disable-next-line no-await-in-loop
+    const exists = await FoodItem.exists({ clientId: candidate })
+    if (!exists) return candidate
+    candidate = `${base}-${i + 2}`
+  }
+
+  // extremely unlikely fallback
+  const rand = Math.random().toString(36).slice(2, 8)
+  candidate = `${base}-${rand}`
+  const exists = await FoodItem.exists({ clientId: candidate })
+  if (!exists) return candidate
+
+  throw new Error('Unable to generate unique clientId')
+}
+
+async function uploadFoodImage({ buffer, mimeType }) {
+  const base64 = buffer.toString('base64')
+  const safeMime = String(mimeType || '').toLowerCase()
+  const dataUri = `data:${safeMime};base64,${base64}`
+
+  const cloudinary = getCloudinary()
+  const folderBase = process.env.CLOUDINARY_FOLDER || 'cb-kare-food-portal'
+
+  const res = await cloudinary.uploader.upload(dataUri, {
+    folder: `${folderBase}/foods`,
+    resource_type: 'image',
+  })
+
+  return {
+    url: res.secure_url,
+    publicId: res.public_id,
+  }
+}
+
+// POST /api/admin/foods
+// Supports JSON or multipart/form-data.
+// Fields: clientId, name, description, isVeg, price, imageUrl?, isActive?
+// File (optional): image
+adminRouter.post('/foods', requireAdmin, upload.single('image'), async (req, res, next) => {
+  try {
+    let clientId = asTrimmedString(req.body.clientId)
+    const name = asTrimmedString(req.body.name)
+    const description = asTrimmedString(req.body.description)
+    const price = Number(req.body.price)
+    const isVegParsed = asBool(req.body.isVeg)
+    const isActiveParsed = asBool(req.body.isActive)
+    const imageUrlProvided = asTrimmedString(req.body.imageUrl)
+
+    if (!name) return res.status(400).json({ error: 'name is required' })
+    if (isVegParsed === null) return res.status(400).json({ error: 'isVeg must be true/false' })
+    if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: 'price must be a number >= 0' })
+
+    if (!clientId) {
+      clientId = await generateUniqueClientIdFromName(name)
+    }
+
+    let imageUrl = imageUrlProvided
+    let imagePublicId = ''
+
+    if (req.file) {
+      const uploaded = await uploadFoodImage({ buffer: req.file.buffer, mimeType: req.file.mimetype })
+      imageUrl = uploaded.url
+      imagePublicId = uploaded.publicId
+    }
+
+    const doc = await FoodItem.create({
+      clientId,
+      name,
+      description,
+      isVeg: isVegParsed,
+      price,
+      imageUrl,
+      imagePublicId,
+      isActive: isActiveParsed === null ? true : isActiveParsed,
+    })
+
+    res.status(201).json({
+      id: doc.clientId,
+      name: doc.name,
+      description: doc.description,
+      isVeg: doc.isVeg,
+      price: doc.price,
+      image: doc.imageUrl,
+      isActive: doc.isActive,
+      createdAt: doc.createdAt,
+    })
+
+    broadcastPublicEvent('foodsChanged', {
+      action: 'created',
+      id: doc.clientId,
+      at: new Date().toISOString(),
+    })
+  } catch (err) {
+    // duplicate key error for clientId
+    if (err?.code === 11000) {
+      return res.status(409).json({ error: 'Food item with this clientId already exists' })
+    }
+    next(err)
+  }
+})
+
+// GET /api/admin/foods
+// Returns all foods (including inactive) for admin management.
+adminRouter.get('/foods', requireAdmin, async (req, res, next) => {
+  try {
+    const foods = await FoodItem.find({}).sort({ createdAt: -1 }).lean()
+    res.json(
+      foods.map((f) => ({
+        id: f.clientId,
+        name: f.name,
+        description: f.description,
+        isVeg: f.isVeg,
+        price: f.price,
+        image: f.imageUrl,
+        isActive: f.isActive,
+        createdAt: f.createdAt,
+        updatedAt: f.updatedAt,
+      }))
+    )
+  } catch (err) {
+    next(err)
+  }
+})
+
+function asOptionalNumber(value) {
+  if (value === undefined || value === null || value === '') return null
+  const n = Number(value)
+  if (!Number.isFinite(n)) return null
+  return n
+}
+
+// PATCH /api/admin/foods/:id
+// Supports JSON or multipart/form-data.
+// Fields: name?, description?, isVeg?, price?, imageUrl?, isActive?
+// File (optional): image
+adminRouter.patch('/foods/:id', requireAdmin, upload.single('image'), async (req, res, next) => {
+  try {
+    const id = asTrimmedString(req.params.id)
+    if (!id) return res.status(400).json({ error: 'food id is required' })
+
+    const updates = {}
+
+    if (req.body?.name !== undefined) {
+      const name = asTrimmedString(req.body.name)
+      if (!name) return res.status(400).json({ error: 'name cannot be empty' })
+      updates.name = name
+    }
+
+    if (req.body?.description !== undefined) {
+      updates.description = asTrimmedString(req.body.description)
+    }
+
+    if (req.body?.isVeg !== undefined) {
+      const isVegParsed = asBool(req.body.isVeg)
+      if (isVegParsed === null) return res.status(400).json({ error: 'isVeg must be true/false' })
+      updates.isVeg = isVegParsed
+    }
+
+    if (req.body?.isActive !== undefined) {
+      const isActiveParsed = asBool(req.body.isActive)
+      if (isActiveParsed === null) return res.status(400).json({ error: 'isActive must be true/false' })
+      updates.isActive = isActiveParsed
+    }
+
+    if (req.body?.price !== undefined) {
+      const price = asOptionalNumber(req.body.price)
+      if (price === null || price < 0) return res.status(400).json({ error: 'price must be a number >= 0' })
+      updates.price = price
+    }
+
+    if (req.body?.imageUrl !== undefined) {
+      updates.imageUrl = asTrimmedString(req.body.imageUrl)
+      updates.imagePublicId = ''
+    }
+
+    if (req.file) {
+      const uploaded = await uploadFoodImage({ buffer: req.file.buffer, mimeType: req.file.mimetype })
+      updates.imageUrl = uploaded.url
+      updates.imagePublicId = uploaded.publicId
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'No updates provided' })
+    }
+
+    const doc = await FoodItem.findOneAndUpdate({ clientId: id }, { $set: updates }, { new: true }).lean()
+    if (!doc) return res.status(404).json({ error: 'Food item not found' })
+
+    res.json({
+      id: doc.clientId,
+      name: doc.name,
+      description: doc.description,
+      isVeg: doc.isVeg,
+      price: doc.price,
+      image: doc.imageUrl,
+      isActive: doc.isActive,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+    })
+
+    broadcastPublicEvent('foodsChanged', {
+      action: 'updated',
+      id: doc.clientId,
+      at: new Date().toISOString(),
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// DELETE /api/admin/foods/:id
+adminRouter.delete('/foods/:id', requireAdmin, async (req, res, next) => {
+  try {
+    const id = asTrimmedString(req.params.id)
+    if (!id) return res.status(400).json({ error: 'food id is required' })
+
+    const deleted = await FoodItem.findOneAndDelete({ clientId: id }).lean()
+    if (!deleted) return res.status(404).json({ error: 'Food item not found' })
+
+    // Best-effort Cloudinary cleanup (ignore failures)
+    try {
+      const publicId = asTrimmedString(deleted.imagePublicId)
+      if (publicId) {
+        const cloudinary = getCloudinary()
+        await cloudinary.uploader.destroy(publicId, { resource_type: 'image' })
+      }
+    } catch {
+      // ignore
+    }
+
+    res.json({ ok: true, id })
+
+    broadcastPublicEvent('foodsChanged', {
+      action: 'deleted',
+      id,
+      at: new Date().toISOString(),
+    })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// PATCH /api/admin/orders/:id/status
+// Body: { status: 'Placed' | 'Verified' | 'Rejected' | 'Delivered', reason?: string }
+adminRouter.patch('/orders/:id/status', requireAdmin, express.json(), async (req, res, next) => {
+  try {
+    const id = asTrimmedString(req.params.id)
+    const status = asTrimmedString(req.body?.status)
+    const reason = asTrimmedString(req.body?.reason)
+
+    const allowed = new Set(['Placed', 'Verified', 'Rejected', 'Delivered'])
+    if (!id) return res.status(400).json({ error: 'order id is required' })
+    if (!allowed.has(status)) return res.status(400).json({ error: 'Invalid status' })
+    if (status === 'Rejected' && !reason) return res.status(400).json({ error: 'Rejection reason is required' })
+
+    const updated = await Order.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          status,
+          rejectionReason: status === 'Rejected' ? reason : '',
+        },
+      },
+      { new: true }
+    ).lean()
+
+    if (!updated) return res.status(404).json({ error: 'Order not found' })
+
+    const payload = {
+      id: updated._id,
+      createdAt: updated.createdAt,
+      status: updated.status,
+      rejectionReason: updated.rejectionReason,
+      team: updated.team,
+      payment: {
+        method: updated.payment?.method,
+        transactionId: updated.payment?.transactionId,
+        screenshotUrl: updated.payment?.screenshotUrl,
+        screenshotName: updated.payment?.screenshotName,
+        uploadStatus: updated.payment?.uploadStatus,
+        uploadError: updated.payment?.uploadError,
+      },
+      items: updated.items,
+      totalItems: updated.totalItems,
+      subtotal: updated.subtotal,
+    }
+
+    broadcastAdminEvent('orderUpdated', payload)
+    broadcastPublicEvent('ordersChanged', {
+      action: 'statusUpdated',
+      id: String(updated._id),
+      status: updated.status,
+      at: new Date().toISOString(),
+    })
+
+    // Order status changes can affect bestseller ranking; prompt clients to refresh foods.
+    broadcastPublicEvent('foodsChanged', {
+      action: 'orderStatusUpdated',
+      id: String(updated._id),
+      status: updated.status,
+      at: new Date().toISOString(),
+    })
+    res.json(payload)
+  } catch (err) {
+    next(err)
+  }
+})
+
+// GET /api/admin/summary/accepted-items
+// Returns totals of ordered quantities across accepted orders (Verified/Delivered).
+adminRouter.get('/summary/accepted-items', requireAdmin, async (req, res, next) => {
+  try {
+    const acceptedStatuses = ['Verified', 'Delivered']
+
+    const [ordersCount, itemsAgg] = await Promise.all([
+      Order.countDocuments({ status: { $in: acceptedStatuses } }),
+      Order.aggregate([
+        { $match: { status: { $in: acceptedStatuses } } },
+        { $unwind: '$items' },
+        {
+          $group: {
+            _id: '$items.clientId',
+            clientId: { $first: '$items.clientId' },
+            name: { $first: '$items.name' },
+            quantity: { $sum: '$items.quantity' },
+          },
+        },
+        {
+          $lookup: {
+            from: FoodItem.collection.name,
+            localField: 'clientId',
+            foreignField: 'clientId',
+            as: 'food',
+          },
+        },
+        {
+          $addFields: {
+            isVeg: { $arrayElemAt: ['$food.isVeg', 0] },
+          },
+        },
+        { $project: { food: 0 } },
+        { $sort: { quantity: -1, name: 1 } },
+      ]),
+    ])
+
+    const items = Array.isArray(itemsAgg) ? itemsAgg : []
+    const totals = {
+      acceptedOrders: ordersCount,
+      totalQuantity: 0,
+    }
+    for (const it of items) totals.totalQuantity += Number(it?.quantity) || 0
+
+    res.json({ acceptedStatuses, totals, items, generatedAt: new Date().toISOString() })
+  } catch (err) {
+    next(err)
+  }
+})

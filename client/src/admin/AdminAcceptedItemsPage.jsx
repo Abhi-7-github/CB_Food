@@ -1,0 +1,189 @@
+import { useEffect, useMemo, useState } from 'react'
+import { adminGetAcceptedItemsSummary } from '../api/cbKareApi.js'
+
+function vegBadge(isVeg) {
+  if (isVeg === true) return { label: 'Veg', cls: 'border-[#2BAD98] bg-[#EAFBF7] text-[#1F7A6B]' }
+  if (isVeg === false) return { label: 'Non-Veg', cls: 'border-rose-200 bg-rose-50 text-rose-800' }
+  return { label: '—', cls: 'border-slate-200 bg-slate-50 text-slate-700' }
+}
+
+export default function AdminAcceptedItemsPage({ adminKey }) {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [data, setData] = useState(null)
+  const [query, setQuery] = useState('')
+
+  const load = async () => {
+    const key = String(adminKey ?? '').trim()
+    if (!key) {
+      setError('Admin key is required')
+      setData(null)
+      setLoading(false)
+      return
+    }
+
+    setLoading(true)
+    setError('')
+    try {
+      const res = await adminGetAcceptedItemsSummary({ adminKey: key })
+      setData(res)
+    } catch (e) {
+      setData(null)
+      setError(e?.message || 'Failed to load accepted items')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminKey])
+
+  useEffect(() => {
+    const key = String(adminKey ?? '').trim()
+    if (!key) return undefined
+
+    const es = new EventSource(`/api/admin/stream?key=${encodeURIComponent(key)}`)
+
+    let timer = null
+    const scheduleReload = () => {
+      if (timer) window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        load()
+      }, 350)
+    }
+
+    es.addEventListener('orderCreated', scheduleReload)
+    es.addEventListener('orderUpdated', scheduleReload)
+
+    es.onerror = () => {
+      // ignore; manual refresh still works
+    }
+
+    return () => {
+      if (timer) window.clearTimeout(timer)
+      es.close()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminKey])
+
+  const items = Array.isArray(data?.items) ? data.items : []
+  const totals = data?.totals || {}
+  const acceptedStatuses = Array.isArray(data?.acceptedStatuses) ? data.acceptedStatuses : ['Verified', 'Delivered']
+
+  const filtered = useMemo(() => {
+    const q = String(query || '').trim().toLowerCase()
+    if (!q) return items
+    return items.filter((it) => {
+      const hay = `${it.clientId || ''} ${it.name || ''}`.toLowerCase()
+      return hay.includes(q)
+    })
+  }, [items, query])
+
+  const breakdown = useMemo(() => {
+    let vegQty = 0
+    let nonVegQty = 0
+    for (const it of items) {
+      const qty = Number(it?.quantity) || 0
+      if (it?.isVeg === true) vegQty += qty
+      else if (it?.isVeg === false) nonVegQty += qty
+    }
+    return { vegQty, nonVegQty }
+  }, [items])
+
+  return (
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-slate-900">Accepted Items Summary</div>
+          <div className="mt-1 text-xs text-slate-600">
+            Counts from <span className="font-semibold">{acceptedStatuses.join(' / ')}</span> orders
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            className="w-56 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-[#2BAD98]"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search item"
+          />
+          <button
+            type="button"
+            className="rounded-xl border border-amber-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-amber-50 disabled:opacity-60"
+            onClick={load}
+            disabled={loading}
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+      ) : null}
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+          <div className="text-xs font-semibold text-slate-600">Accepted Orders</div>
+          <div className="mt-1 text-2xl font-bold text-slate-900">{totals.acceptedOrders ?? 0}</div>
+        </div>
+        <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+          <div className="text-xs font-semibold text-slate-600">Total Items Quantity</div>
+          <div className="mt-1 text-2xl font-bold text-slate-900">{totals.totalQuantity ?? 0}</div>
+        </div>
+        <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+          <div className="text-xs font-semibold text-slate-600">Veg / Non-Veg</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <span className="inline-flex items-center rounded-full border border-[#2BAD98] bg-[#EAFBF7] px-3 py-1 text-xs font-semibold text-[#1F7A6B]">
+              Veg: {breakdown.vegQty}
+            </span>
+            <span className="inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-800">
+              Non-Veg: {breakdown.nonVegQty}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-sm font-semibold text-slate-900">Items</div>
+          <div className="text-xs text-slate-600">Showing {filtered.length} / {items.length}</div>
+        </div>
+
+        {loading ? <div className="mt-3 text-sm text-slate-600">Loading…</div> : null}
+
+        {!loading && filtered.length === 0 ? (
+          <div className="mt-3 text-sm text-slate-600">No items found.</div>
+        ) : null}
+
+        <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
+          <div className="grid grid-cols-[1fr_110px] bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+            <div>Item</div>
+            <div className="text-right">Quantity</div>
+          </div>
+          <div className="divide-y divide-slate-200">
+            {filtered.map((it) => {
+              const badge = vegBadge(it?.isVeg)
+              return (
+                <div key={it.clientId || it.name} className="flex items-center justify-between gap-3 px-3 py-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-slate-900">{it.name || it.clientId}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${badge.cls}`}>{badge.label}</span>
+                      <span className="truncate text-[11px] text-slate-500">ID: {it.clientId}</span>
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right text-base font-bold text-slate-900">{it.quantity ?? 0}</div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="mt-3 text-[11px] text-slate-500">Generated at: {data?.generatedAt || '-'}</div>
+      </div>
+    </div>
+  )
+}
