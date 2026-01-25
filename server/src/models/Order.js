@@ -40,6 +40,8 @@ const PaymentSchema = new mongoose.Schema(
 const OrderSchema = new mongoose.Schema(
   {
     clientUserId: { type: String, required: true, index: true },
+    // Enforces case-insensitive uniqueness for payment.transactionId
+    transactionIdNormalized: { type: String, required: true, unique: true, index: true },
     status: { type: String, enum: ['Placed', 'Verified', 'Rejected', 'Delivered'], default: 'Placed' },
     rejectionReason: { type: String, default: '' },
     team: { type: TeamSchema, required: true },

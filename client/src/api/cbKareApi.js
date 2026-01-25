@@ -129,6 +129,12 @@ export async function createOrder({
 
 }
 
+export async function checkTransactionIdAvailability(transactionId) {
+  const qs = new URLSearchParams()
+  qs.set('transactionId', String(transactionId ?? '').trim())
+  return apiFetch(`/api/orders/transaction-id-available?${qs.toString()}`)
+}
+
 export async function adminCreateFood({
   adminKey,
   clientId,

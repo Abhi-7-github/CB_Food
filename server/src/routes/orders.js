@@ -25,6 +25,11 @@ function asTrimmedString(value) {
 
 const MAX_TOTAL_ITEMS_PER_ORDER = 10
 
+const KLU_EMAIL_DOMAIN = '@klu.ac.in'
+const NAME_REGEX = /^[A-Za-z ]+$/
+const TXN_REGEX = /^[A-Za-z0-9]+$/
+const PHONE_REGEX = /^\d+$/
+
 function getClientUserId(req) {
   const header = req.header('x-client-user-id')
   return asTrimmedString(header)
@@ -99,6 +104,25 @@ ordersRouter.get('/', async (req, res, next) => {
   }
 })
 
+// GET /api/orders/transaction-id-available?transactionId=...
+// Used for client-side debounced validation.
+ordersRouter.get('/transaction-id-available', async (req, res, next) => {
+  try {
+    const transactionId = asTrimmedString(req.query.transactionId)
+    if (!transactionId) return res.status(400).json({ error: 'transactionId is required' })
+    if (!TXN_REGEX.test(transactionId)) {
+      return res.status(400).json({ error: 'Transaction ID must be alphanumeric (A-Z, 0-9) with no spaces' })
+    }
+
+    const normalized = transactionId.toLowerCase()
+    const exists = await Order.exists({ transactionIdNormalized: normalized })
+
+    res.json({ available: !exists })
+  } catch (err) {
+    next(err)
+  }
+})
+
 // POST /api/orders (multipart/form-data)
 // fields: teamName, leaderName, phone, email, transactionId, items(JSON), subtotal, totalItems
 // file: paymentScreenshot
@@ -119,8 +143,25 @@ ordersRouter.post('/', upload.single('paymentScreenshot'), async (req, res, next
       return res.status(400).json({ error: 'Missing required team fields' })
     }
 
+    if (!PHONE_REGEX.test(phone)) {
+      return res.status(400).json({ error: 'Phone number must contain digits only' })
+    }
+
+    if (!NAME_REGEX.test(leaderName)) {
+      return res.status(400).json({ error: 'Team leader name can contain only letters and spaces' })
+    }
+
+    const emailLower = email.toLowerCase()
+    if (!emailLower.endsWith(KLU_EMAIL_DOMAIN)) {
+      return res.status(400).json({ error: `Email must end with ${KLU_EMAIL_DOMAIN}` })
+    }
+
     if (!transactionId) {
       return res.status(400).json({ error: 'Transaction ID is required' })
+    }
+
+    if (!TXN_REGEX.test(transactionId)) {
+      return res.status(400).json({ error: 'Transaction ID must be alphanumeric (A-Z, 0-9) with no spaces' })
     }
 
     if (!clientUserId) {
@@ -129,6 +170,16 @@ ordersRouter.post('/', upload.single('paymentScreenshot'), async (req, res, next
 
     if (!req.file) {
       return res.status(400).json({ error: 'paymentScreenshot is required' })
+    }
+
+    const transactionIdNormalized = transactionId.toLowerCase()
+
+    // Fraud prevention: block reused transaction IDs (case-insensitive).
+    const txnExists = await Order.exists({ transactionIdNormalized })
+    if (txnExists) {
+      return res.status(409).json({
+        error: 'This transaction ID has already been used. Please enter a valid and unused transaction ID.',
+      })
     }
 
     let items = []
@@ -166,6 +217,7 @@ ordersRouter.post('/', upload.single('paymentScreenshot'), async (req, res, next
 
     const order = await Order.create({
       clientUserId,
+      transactionIdNormalized,
       status: 'Placed',
       rejectionReason: '',
       team: { teamName, leaderName, phone, email },
@@ -273,6 +325,12 @@ ordersRouter.post('/', upload.single('paymentScreenshot'), async (req, res, next
 
     res.status(202).json(createdPayload)
   } catch (err) {
+    // Handle unique index race-condition (two users submit same txn at the same time).
+    if (err && typeof err === 'object' && err.code === 11000) {
+      return res.status(409).json({
+        error: 'This transaction ID has already been used. Please enter a valid and unused transaction ID.',
+      })
+    }
     next(err)
   }
 })

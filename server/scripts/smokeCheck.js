@@ -72,7 +72,7 @@ async function run() {
   }
 
   // GET /api/orders
-  const orders0 = await request(app).get('/api/orders')
+  const orders0 = await request(app).get('/api/orders').set('x-client-user-id', 'smoke-user-1')
   if (orders0.status !== 200 || !Array.isArray(orders0.body)) {
     throw new Error(`/api/orders GET failed: ${orders0.status} ${JSON.stringify(orders0.body)}`)
   }
@@ -87,10 +87,11 @@ async function run() {
 
   const post = await request(app)
     .post('/api/orders')
+    .set('x-client-user-id', 'smoke-user-1')
     .field('teamName', 'CB Warriors')
     .field('leaderName', 'Leader Name')
     .field('phone', '9876543210')
-    .field('email', 'leader@college.edu')
+    .field('email', 'leader@klu.ac.in')
     .field('transactionId', 'TXN123456')
     .field('items', JSON.stringify(items))
     .field('subtotal', String(subtotal))
@@ -102,7 +103,7 @@ async function run() {
   }
 
   // GET /api/orders should include the new order
-  const orders1 = await request(app).get('/api/orders')
+  const orders1 = await request(app).get('/api/orders').set('x-client-user-id', 'smoke-user-1')
   if (orders1.status !== 200 || !Array.isArray(orders1.body) || orders1.body.length < 1) {
     throw new Error(`/api/orders GET after POST failed: ${orders1.status} ${JSON.stringify(orders1.body)}`)
   }

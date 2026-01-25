@@ -3,6 +3,7 @@ import dotenv from 'dotenv'
 import { connectDb } from './src/config/db.js'
 import { configureCloudinary } from './src/config/cloudinary.js'
 import { createApp } from './src/app.js'
+import { startEmailWorker } from './src/email/emailWorker.js'
 
 dotenv.config()
 
@@ -13,6 +14,7 @@ const port = Number(process.env.PORT || 5000)
 async function start() {
 	await connectDb(process.env.MONGODB_URI)
 	configureCloudinary()
+	startEmailWorker()
 
 	app.listen(port, () => {
 		// eslint-disable-next-line no-console

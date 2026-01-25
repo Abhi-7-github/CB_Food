@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { createOrder, getActivePaymentQr } from './api/cbKareApi.js'
+import { checkTransactionIdAvailability, createOrder, getActivePaymentQr } from './api/cbKareApi.js'
 import { useLocalStorageState } from './hooks/useLocalStorageState.js'
 import paymentQr from './assets/payment-qr.svg'
 
@@ -19,6 +19,11 @@ function formatPrice(value) {
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())
 }
+
+const KLU_EMAIL_DOMAIN = '@klu.ac.in'
+const NAME_REGEX = /^[A-Za-z ]+$/
+const TXN_REGEX = /^[A-Za-z0-9]+$/
+const PHONE_REGEX = /^\d+$/
 
 function OrderPage({ foods = [], cart, setCart }) {
   const navigate = useNavigate()
@@ -62,6 +67,8 @@ function OrderPage({ foods = [], cart, setCart }) {
   const [errors, setErrors] = useState({})
   const [submitError, setSubmitError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const [txnCheck, setTxnCheck] = useState({ status: 'idle', message: '' })
 
   const [paymentScreenshotFile, setPaymentScreenshotFile] = useState(null)
   const [paymentScreenshotUrl, setPaymentScreenshotUrl] = useState('')
@@ -147,11 +154,23 @@ function OrderPage({ foods = [], cart, setCart }) {
 
   const validateStep1 = () => {
     const nextErrors = {}
-    if (!String(draft?.teamName ?? '').trim()) nextErrors.teamName = 'Team name is required'
-    if (!String(draft?.leaderName ?? '').trim()) nextErrors.leaderName = 'Team leader name is required'
-    if (!String(draft?.phone ?? '').trim()) nextErrors.phone = 'Phone number is required'
-    if (!String(draft?.email ?? '').trim()) nextErrors.email = 'Email is required'
-    else if (!isValidEmail(draft.email)) nextErrors.email = 'Enter a valid email'
+    const teamName = String(draft?.teamName ?? '').trim()
+    const leaderName = String(draft?.leaderName ?? '').trim()
+
+    if (!teamName) nextErrors.teamName = 'Team name is required'
+
+    if (!leaderName) nextErrors.leaderName = 'Team leader name is required'
+    else if (!NAME_REGEX.test(leaderName)) nextErrors.leaderName = 'Only letters and spaces are allowed'
+
+    const phone = String(draft?.phone ?? '').trim()
+    if (!phone) nextErrors.phone = 'Phone number is required'
+    else if (!PHONE_REGEX.test(phone)) nextErrors.phone = 'Phone number must contain digits only'
+
+    const email = String(draft?.email ?? '').trim()
+    if (!email) nextErrors.email = 'Email is required'
+    else if (!isValidEmail(email)) nextErrors.email = 'Enter a valid email'
+    else if (!email.toLowerCase().endsWith(KLU_EMAIL_DOMAIN)) nextErrors.email = `Email must end with ${KLU_EMAIL_DOMAIN}`
+
     if (cartItems.length === 0) nextErrors.cart = 'Your cart is empty'
     else if (cartItems.some((it) => it?.isActive === false)) nextErrors.cart = 'Remove inactive items from cart to continue'
     else if (Number(totalItems) > 10) nextErrors.cart = 'Maximum 10 total items allowed per order'
@@ -160,10 +179,47 @@ function OrderPage({ foods = [], cart, setCart }) {
 
   const validateStep2 = () => {
     const nextErrors = {}
-    if (!String(draft.transactionId ?? '').trim()) nextErrors.transactionId = 'Transaction ID is required'
+    const tid = String(draft.transactionId ?? '').trim()
+    if (!tid) nextErrors.transactionId = 'Transaction ID is required'
+    else if (!TXN_REGEX.test(tid)) nextErrors.transactionId = 'Transaction ID must be alphanumeric (A-Z, 0-9) with no spaces'
+    else if (txnCheck.status === 'used') nextErrors.transactionId = 'This transaction ID has already been used'
     if (!paymentScreenshotFile) nextErrors.paymentScreenshot = 'Upload payment screenshot'
     return nextErrors
   }
+
+  useEffect(() => {
+    const tid = String(draft?.transactionId ?? '').trim()
+
+    if (!tid) {
+      setTxnCheck({ status: 'idle', message: '' })
+      return
+    }
+
+    if (!TXN_REGEX.test(tid)) {
+      setTxnCheck({ status: 'invalid', message: 'Only letters and numbers are allowed (no spaces).' })
+      return
+    }
+
+    let cancelled = false
+    const timer = window.setTimeout(async () => {
+      setTxnCheck({ status: 'checking', message: 'Checking transaction ID…' })
+      try {
+        const res = await checkTransactionIdAvailability(tid)
+        if (cancelled) return
+        const available = Boolean(res?.available)
+        if (available) setTxnCheck({ status: 'available', message: 'Transaction ID is available.' })
+        else setTxnCheck({ status: 'used', message: 'This transaction ID has already been used.' })
+      } catch (e) {
+        if (cancelled) return
+        setTxnCheck({ status: 'error', message: e?.message || 'Could not verify transaction ID right now.' })
+      }
+    }, 450)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [draft?.transactionId])
 
   const goNext = (e) => {
     e.preventDefault()
@@ -284,7 +340,7 @@ function OrderPage({ foods = [], cart, setCart }) {
                   className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-[#2BAD98]"
                   value={draft.email ?? ''}
                   onChange={(e) => setDraft((p) => ({ ...p, email: e.target.value }))}
-                  placeholder="yourname@college.edu"
+                  placeholder="regno@klu.ac.in"
                   inputMode="email"
                 />
                 {errors.email ? <span className="text-xs text-red-600">{errors.email}</span> : null}
@@ -398,6 +454,15 @@ function OrderPage({ foods = [], cart, setCart }) {
                   onChange={(e) => setDraft((p) => ({ ...p, transactionId: e.target.value }))}
                   placeholder="Enter transaction/reference id"
                 />
+                {txnCheck.status === 'checking' ? (
+                  <span className="text-xs text-slate-500">{txnCheck.message}</span>
+                ) : null}
+                {txnCheck.status === 'available' ? (
+                  <span className="text-xs text-emerald-700">{txnCheck.message}</span>
+                ) : null}
+                {txnCheck.status === 'invalid' || txnCheck.status === 'used' || txnCheck.status === 'error' ? (
+                  <span className="text-xs text-red-600">{txnCheck.message}</span>
+                ) : null}
                 {errors.transactionId ? (
                   <span className="text-xs text-red-600">{errors.transactionId}</span>
                 ) : null}
@@ -415,7 +480,7 @@ function OrderPage({ foods = [], cart, setCart }) {
               <button
                 type="submit"
                 className="rounded-xl bg-[#FF2D87] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-                disabled={cartItems.length === 0 || isSubmitting}
+                disabled={cartItems.length === 0 || isSubmitting || txnCheck.status === 'used' || txnCheck.status === 'invalid' || txnCheck.status === 'checking'}
               >
                 {isSubmitting ? 'Submitting…' : 'Submit'}
               </button>
@@ -498,7 +563,7 @@ function OrderPage({ foods = [], cart, setCart }) {
                 type="submit"
                 form="orderStep2"
                 className="rounded-xl bg-[#FF2D87] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-                disabled={cartItems.length === 0 || isSubmitting}
+                disabled={cartItems.length === 0 || isSubmitting || txnCheck.status === 'used' || txnCheck.status === 'invalid' || txnCheck.status === 'checking'}
               >
                 {isSubmitting ? 'Submitting…' : 'Submit'}
               </button>
