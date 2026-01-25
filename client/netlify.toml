@@ -5,6 +5,19 @@
   command = "npm run build"
   publish = "dist"
 
+# Proxy API requests to the backend (Render) so /api/stream stays text/event-stream.
+[[redirects]]
+  from = "/api/*"
+  to = "https://cb-food.onrender.com/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/health"
+  to = "https://cb-food.onrender.com/health"
+  status = 200
+  force = true
+
 # SPA routing: send all non-file requests to index.html
 [[redirects]]
   from = "/*"

@@ -49,6 +49,8 @@ export function createApp() {
     limit: Number(process.env.RATE_LIMIT_API || 300),
     standardHeaders: 'draft-7',
     legacyHeaders: false,
+    // SSE connections can reconnect rapidly on flaky networks; don't 429 the stream.
+    skip: (req) => req.path === '/stream',
   })
 
   const adminLimiter = rateLimit({
@@ -56,6 +58,8 @@ export function createApp() {
     limit: Number(process.env.RATE_LIMIT_ADMIN || 60),
     standardHeaders: 'draft-7',
     legacyHeaders: false,
+    // Admin SSE stream should not be rate-limited.
+    skip: (req) => req.path === '/stream',
   })
 
   app.use('/api', apiLimiter)

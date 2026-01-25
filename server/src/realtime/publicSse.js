@@ -6,8 +6,10 @@ function writeEvent(res, event, data) {
 }
 
 export function addPublicSseClient(req, res) {
+  if (res.headersSent) return
+
   res.status(200)
-  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
   res.setHeader('Cache-Control', 'no-cache, no-transform')
   res.setHeader('Connection', 'keep-alive')
   res.setHeader('X-Accel-Buffering', 'no')
@@ -15,6 +17,11 @@ export function addPublicSseClient(req, res) {
   if (typeof res.flushHeaders === 'function') res.flushHeaders()
 
   clients.add(res)
+
+  // Tell the browser how long to wait before retrying a dropped connection.
+  res.write('retry: 5000\n\n')
+  // Initial comment line helps some proxies establish streaming early.
+  res.write(`: connected ${new Date().toISOString()}\n\n`)
 
   writeEvent(res, 'hello', { ok: true, now: new Date().toISOString() })
 
@@ -24,7 +31,7 @@ export function addPublicSseClient(req, res) {
     } catch {
       // handled by close
     }
-  }, 15000)
+  }, 25000)
 
   req.on('close', () => {
     clearInterval(keepAlive)

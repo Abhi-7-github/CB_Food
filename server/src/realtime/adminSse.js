@@ -6,8 +6,10 @@ function writeEvent(res, event, data) {
 }
 
 export function addAdminSseClient(req, res) {
+  if (res.headersSent) return
+
   res.status(200)
-  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
   res.setHeader('Cache-Control', 'no-cache, no-transform')
   res.setHeader('Connection', 'keep-alive')
   // Helps with some reverse proxies (nginx) to avoid buffering SSE.
@@ -17,6 +19,9 @@ export function addAdminSseClient(req, res) {
 
   clients.add(res)
 
+  res.write('retry: 5000\n\n')
+  res.write(`: connected ${new Date().toISOString()}\n\n`)
+
   writeEvent(res, 'hello', { ok: true, now: new Date().toISOString() })
 
   const keepAlive = setInterval(() => {
@@ -25,7 +30,7 @@ export function addAdminSseClient(req, res) {
     } catch {
       // handled by close
     }
-  }, 15000)
+  }, 25000)
 
   req.on('close', () => {
     clearInterval(keepAlive)
