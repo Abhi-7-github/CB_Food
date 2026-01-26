@@ -235,7 +235,7 @@ export default function AdminManageFoods({ adminKey, onFoodsChanged }) {
                     </div>
                     {f.image ? (
                       <a className="mt-2 inline-block text-xs text-[#2BAD98] underline" href={f.image} target="_blank" rel="noreferrer">
-                        View image
+                        View Image
                       </a>
                     ) : (
                       <div className="mt-2 text-xs text-slate-500">No image</div>
