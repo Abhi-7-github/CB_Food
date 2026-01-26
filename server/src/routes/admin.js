@@ -8,7 +8,8 @@ import { PaymentQr } from '../models/PaymentQr.js'
 import { getCloudinary } from '../config/cloudinary.js'
 import { addAdminSseClient, broadcastAdminEvent } from '../realtime/adminSse.js'
 import { broadcastPublicEvent } from '../realtime/publicSse.js'
-import { sendOrderRejectedEmail, sendOrderVerifiedEmail } from '../email/mailer.js'
+import { runAfterResponse } from '../utils/background.js'
+import { deliverDecisionEmailForOrder } from '../email/decisionEmail.js'
 
 export const adminRouter = express.Router()
 
@@ -148,24 +149,59 @@ adminRouter.post('/payment-qrs', requireAdmin, upload.single('image'), async (re
     if (count >= 4) return res.status(400).json({ error: 'Maximum 4 QR codes allowed. Delete one to upload more.' })
     if (!req.file) return res.status(400).json({ error: 'image file is required' })
 
-    const uploaded = await uploadPaymentQrImage({ buffer: req.file.buffer, mimeType: req.file.mimetype })
-
+    // Create DB record first, respond immediately, then upload to Cloudinary in the background.
     const doc = await PaymentQr.create({
-      imageUrl: uploaded.url,
-      imagePublicId: uploaded.publicId,
+      imageUrl: '',
+      imagePublicId: '',
       isActive: false,
+      uploadStatus: 'pending',
+      uploadError: '',
     })
 
     res.status(201).json({
       id: String(doc._id),
       imageUrl: doc.imageUrl,
       isActive: Boolean(doc.isActive),
+      uploadStatus: doc.uploadStatus,
+      uploadError: doc.uploadError,
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
     })
 
     broadcastAdminEvent('paymentQrChanged', { action: 'created', id: String(doc._id), at: new Date().toISOString() })
     broadcastPublicEvent('paymentQrChanged', { action: 'created', id: String(doc._id), at: new Date().toISOString() })
+
+    const buffer = req.file.buffer
+    const mimeType = req.file.mimetype
+    runAfterResponse(res, 'upload payment qr image', async () => {
+      try {
+        const uploaded = await uploadPaymentQrImage({ buffer, mimeType })
+        await PaymentQr.updateOne(
+          { _id: doc._id },
+          {
+            $set: {
+              imageUrl: uploaded.url,
+              imagePublicId: uploaded.publicId,
+              uploadStatus: 'uploaded',
+              uploadError: '',
+            },
+          }
+        )
+      } catch (err) {
+        await PaymentQr.updateOne(
+          { _id: doc._id },
+          {
+            $set: {
+              uploadStatus: 'failed',
+              uploadError: asTrimmedString(err?.message || 'Upload failed'),
+            },
+          }
+        )
+      }
+
+      broadcastAdminEvent('paymentQrChanged', { action: 'updated', id: String(doc._id), at: new Date().toISOString() })
+      broadcastPublicEvent('paymentQrChanged', { action: 'updated', id: String(doc._id), at: new Date().toISOString() })
+    })
   } catch (err) {
     next(err)
   }
@@ -213,19 +249,22 @@ adminRouter.delete('/payment-qrs/:id', requireAdmin, async (req, res, next) => {
     const deleted = await PaymentQr.findByIdAndDelete(id).lean()
     if (!deleted) return res.status(404).json({ error: 'Payment QR not found' })
 
-    try {
-      const publicId = asTrimmedString(deleted.imagePublicId)
-      if (publicId) {
-        const cloudinary = getCloudinary()
-        await cloudinary.uploader.destroy(publicId, { resource_type: 'image' })
-      }
-    } catch {
-      // ignore
-    }
-
     res.json({ ok: true, id })
     broadcastAdminEvent('paymentQrChanged', { action: 'deleted', id, at: new Date().toISOString() })
     broadcastPublicEvent('paymentQrChanged', { action: 'deleted', id, at: new Date().toISOString() })
+
+    // Cloudinary cleanup in background (never block HTTP response).
+    const publicId = asTrimmedString(deleted.imagePublicId)
+    if (publicId) {
+      runAfterResponse(res, 'delete payment qr image', async () => {
+        try {
+          const cloudinary = getCloudinary()
+          await cloudinary.uploader.destroy(publicId, { resource_type: 'image' })
+        } catch {
+          // ignore
+        }
+      })
+    }
   } catch (err) {
     next(err)
   }
@@ -253,23 +292,17 @@ adminRouter.post('/foods', requireAdmin, upload.single('image'), async (req, res
       clientId = await generateUniqueClientIdFromName(name)
     }
 
-    let imageUrl = imageUrlProvided
-    let imagePublicId = ''
-
-    if (req.file) {
-      const uploaded = await uploadFoodImage({ buffer: req.file.buffer, mimeType: req.file.mimetype })
-      imageUrl = uploaded.url
-      imagePublicId = uploaded.publicId
-    }
-
+    const hasFile = Boolean(req.file)
     const doc = await FoodItem.create({
       clientId,
       name,
       description,
       isVeg: isVegParsed,
       price,
-      imageUrl,
-      imagePublicId,
+      imageUrl: hasFile ? '' : imageUrlProvided,
+      imagePublicId: '',
+      imageUploadStatus: hasFile ? 'pending' : 'uploaded',
+      imageUploadError: '',
       isActive: isActiveParsed === null ? true : isActiveParsed,
     })
 
@@ -280,6 +313,8 @@ adminRouter.post('/foods', requireAdmin, upload.single('image'), async (req, res
       isVeg: doc.isVeg,
       price: doc.price,
       image: doc.imageUrl,
+      imageUploadStatus: doc.imageUploadStatus,
+      imageUploadError: doc.imageUploadError,
       isActive: doc.isActive,
       createdAt: doc.createdAt,
     })
@@ -289,6 +324,43 @@ adminRouter.post('/foods', requireAdmin, upload.single('image'), async (req, res
       id: doc.clientId,
       at: new Date().toISOString(),
     })
+
+    if (hasFile) {
+      const buffer = req.file.buffer
+      const mimeType = req.file.mimetype
+      runAfterResponse(res, 'upload food image', async () => {
+        try {
+          const uploaded = await uploadFoodImage({ buffer, mimeType })
+          await FoodItem.updateOne(
+            { clientId: doc.clientId },
+            {
+              $set: {
+                imageUrl: uploaded.url,
+                imagePublicId: uploaded.publicId,
+                imageUploadStatus: 'uploaded',
+                imageUploadError: '',
+              },
+            }
+          )
+        } catch (err) {
+          await FoodItem.updateOne(
+            { clientId: doc.clientId },
+            {
+              $set: {
+                imageUploadStatus: 'failed',
+                imageUploadError: asTrimmedString(err?.message || 'Upload failed'),
+              },
+            }
+          )
+        }
+
+        broadcastPublicEvent('foodsChanged', {
+          action: 'updated',
+          id: doc.clientId,
+          at: new Date().toISOString(),
+        })
+      })
+    }
   } catch (err) {
     // duplicate key error for clientId
     if (err?.code === 11000) {
@@ -337,6 +409,9 @@ adminRouter.patch('/foods/:id', requireAdmin, upload.single('image'), async (req
     const id = asTrimmedString(req.params.id)
     if (!id) return res.status(400).json({ error: 'food id is required' })
 
+    const existing = await FoodItem.findOne({ clientId: id }).lean()
+    if (!existing) return res.status(404).json({ error: 'Food item not found' })
+
     const updates = {}
 
     if (req.body?.name !== undefined) {
@@ -370,12 +445,14 @@ adminRouter.patch('/foods/:id', requireAdmin, upload.single('image'), async (req
     if (req.body?.imageUrl !== undefined) {
       updates.imageUrl = asTrimmedString(req.body.imageUrl)
       updates.imagePublicId = ''
+      updates.imageUploadStatus = 'uploaded'
+      updates.imageUploadError = ''
     }
 
-    if (req.file) {
-      const uploaded = await uploadFoodImage({ buffer: req.file.buffer, mimeType: req.file.mimetype })
-      updates.imageUrl = uploaded.url
-      updates.imagePublicId = uploaded.publicId
+    const hasNewFile = Boolean(req.file)
+    if (hasNewFile) {
+      updates.imageUploadStatus = 'pending'
+      updates.imageUploadError = ''
     }
 
     if (Object.keys(updates).length === 0) {
@@ -392,10 +469,74 @@ adminRouter.patch('/foods/:id', requireAdmin, upload.single('image'), async (req
       isVeg: doc.isVeg,
       price: doc.price,
       image: doc.imageUrl,
+      imageUploadStatus: doc.imageUploadStatus,
+      imageUploadError: doc.imageUploadError,
       isActive: doc.isActive,
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
     })
+
+    // Background image work (upload/cleanup) after response.
+    if (req.body?.imageUrl !== undefined && existing.imagePublicId) {
+      const oldPublicId = asTrimmedString(existing.imagePublicId)
+      if (oldPublicId) {
+        runAfterResponse(res, 'delete old food image', async () => {
+          try {
+            const cloudinary = getCloudinary()
+            await cloudinary.uploader.destroy(oldPublicId, { resource_type: 'image' })
+          } catch {
+            // ignore
+          }
+        })
+      }
+    }
+
+    if (hasNewFile) {
+      const oldPublicId = asTrimmedString(existing.imagePublicId)
+      const buffer = req.file.buffer
+      const mimeType = req.file.mimetype
+      runAfterResponse(res, 'upload updated food image', async () => {
+        try {
+          const uploaded = await uploadFoodImage({ buffer, mimeType })
+          await FoodItem.updateOne(
+            { clientId: id },
+            {
+              $set: {
+                imageUrl: uploaded.url,
+                imagePublicId: uploaded.publicId,
+                imageUploadStatus: 'uploaded',
+                imageUploadError: '',
+              },
+            }
+          )
+
+          if (oldPublicId) {
+            try {
+              const cloudinary = getCloudinary()
+              await cloudinary.uploader.destroy(oldPublicId, { resource_type: 'image' })
+            } catch {
+              // ignore
+            }
+          }
+        } catch (err) {
+          await FoodItem.updateOne(
+            { clientId: id },
+            {
+              $set: {
+                imageUploadStatus: 'failed',
+                imageUploadError: asTrimmedString(err?.message || 'Upload failed'),
+              },
+            }
+          )
+        }
+
+        broadcastPublicEvent('foodsChanged', {
+          action: 'updated',
+          id,
+          at: new Date().toISOString(),
+        })
+      })
+    }
 
     broadcastPublicEvent('foodsChanged', {
       action: 'updated',
@@ -416,18 +557,20 @@ adminRouter.delete('/foods/:id', requireAdmin, async (req, res, next) => {
     const deleted = await FoodItem.findOneAndDelete({ clientId: id }).lean()
     if (!deleted) return res.status(404).json({ error: 'Food item not found' })
 
-    // Best-effort Cloudinary cleanup (ignore failures)
-    try {
-      const publicId = asTrimmedString(deleted.imagePublicId)
-      if (publicId) {
-        const cloudinary = getCloudinary()
-        await cloudinary.uploader.destroy(publicId, { resource_type: 'image' })
-      }
-    } catch {
-      // ignore
-    }
-
     res.json({ ok: true, id })
+
+    // Best-effort Cloudinary cleanup in background.
+    const publicId = asTrimmedString(deleted.imagePublicId)
+    if (publicId) {
+      runAfterResponse(res, 'delete food image', async () => {
+        try {
+          const cloudinary = getCloudinary()
+          await cloudinary.uploader.destroy(publicId, { resource_type: 'image' })
+        } catch {
+          // ignore
+        }
+      })
+    }
 
     broadcastPublicEvent('foodsChanged', {
       action: 'deleted',
@@ -468,6 +611,13 @@ adminRouter.patch('/orders/:id/status', requireAdmin, express.json(), async (req
           $set: {
             status,
             rejectionReason: status === 'Rejected' ? reason : '',
+            decisionEmail: {
+              type: status,
+              status: 'queued',
+              attempts: 0,
+              lastError: '',
+              queuedAt: new Date(),
+            },
           },
         },
         { new: true }
@@ -532,14 +682,13 @@ adminRouter.patch('/orders/:id/status', requireAdmin, express.json(), async (req
     })
     res.json(payload)
 
-    // Send email only for admin's final decision (Verified/Rejected), and only once.
+    // Email policy (strict):
+    // - never on create
+    // - never for Placed/Delivered
+    // - exactly once when transitioning Placed -> Verified/Rejected
     if (shouldSendDecisionEmail) {
-      setImmediate(() => {
-        if (status === 'Verified') {
-          sendOrderVerifiedEmail(updated).catch((err) => console.error('[mail] verified email failed:', err))
-        } else if (status === 'Rejected') {
-          sendOrderRejectedEmail(updated).catch((err) => console.error('[mail] rejection email failed:', err))
-        }
+      runAfterResponse(res, 'send decision email', async () => {
+        await deliverDecisionEmailForOrder(updated._id)
       })
     }
   } catch (err) {

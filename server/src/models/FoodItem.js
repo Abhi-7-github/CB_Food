@@ -10,6 +10,8 @@ const FoodItemSchema = new mongoose.Schema(
     price: { type: Number, required: true, min: 0 },
     imageUrl: { type: String, default: '' },
     imagePublicId: { type: String, default: '' },
+    imageUploadStatus: { type: String, enum: ['uploaded', 'pending', 'failed'], default: 'uploaded' },
+    imageUploadError: { type: String, default: '' },
     isActive: { type: Boolean, default: true },
   },
   { timestamps: true }

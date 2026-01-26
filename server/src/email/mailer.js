@@ -443,10 +443,10 @@ export function buildFinalDecisionEmailTemplate(params) {
 }
 
 export async function sendOrderVerifiedEmail(order) {
-  if (!isMailEnabled()) return
+  if (!isMailEnabled()) return { ok: false, skipped: true, reason: 'MAIL_DISABLED' }
 
   const to = String(order?.team?.email || '').trim()
-  if (!to) return
+  if (!to) return { ok: false, skipped: true, reason: 'MISSING_TO' }
 
   const from = String(process.env.MAIL_FROM || process.env.SMTP_USER || '').trim() || undefined
   const { subject, html, text } = buildFinalDecisionEmailTemplate({
@@ -486,13 +486,15 @@ export async function sendOrderVerifiedEmail(order) {
       },
     ],
   })
+
+  return { ok: true }
 }
 
 export async function sendOrderRejectedEmail(order) {
-  if (!isMailEnabled()) return
+  if (!isMailEnabled()) return { ok: false, skipped: true, reason: 'MAIL_DISABLED' }
 
   const to = String(order?.team?.email || '').trim()
-  if (!to) return
+  if (!to) return { ok: false, skipped: true, reason: 'MISSING_TO' }
 
   const from = String(process.env.MAIL_FROM || process.env.SMTP_USER || '').trim() || undefined
   const { subject, html, text } = buildFinalDecisionEmailTemplate({
@@ -533,4 +535,6 @@ export async function sendOrderRejectedEmail(order) {
       },
     ],
   })
+
+  return { ok: true }
 }

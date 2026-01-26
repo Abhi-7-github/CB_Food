@@ -4,7 +4,11 @@ export function startEmailWorker() {
   const enabledRaw = process.env.MAIL_ENABLED
   const enabled = String(enabledRaw ?? '').trim().toLowerCase() === 'true'
 
-  if (!enabled) return
+  if (!enabled) {
+    // eslint-disable-next-line no-console
+    console.log('[mail] Disabled (MAIL_ENABLED!=true)')
+    return
+  }
 
   // Warm up mailer module early so missing SMTP env shows up on boot.
   // Does not send any mail.
