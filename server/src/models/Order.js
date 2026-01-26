@@ -14,7 +14,14 @@ const TeamSchema = new mongoose.Schema(
   {
     teamName: { type: String, required: true, trim: true },
     leaderName: { type: String, required: true, trim: true },
-    phone: { type: String, required: true, trim: true },
+    phone: {
+      type: String,
+      required: true,
+      trim: true,
+      minlength: 10,
+      maxlength: 10,
+      match: [/^\d{10}$/, 'Phone number must be exactly 10 digits'],
+    },
     email: { type: String, required: true, trim: true },
   },
   { _id: false }

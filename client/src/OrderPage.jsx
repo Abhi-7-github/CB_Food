@@ -24,6 +24,13 @@ const KLU_EMAIL_DOMAIN = '@klu.ac.in'
 const NAME_REGEX = /^[A-Za-z ]+$/
 const TXN_REGEX = /^[A-Za-z0-9]+$/
 const PHONE_REGEX = /^\d+$/
+const PHONE_LEN = 10
+
+function digitsOnlyMax(value, maxLen) {
+  return String(value ?? '')
+    .replace(/\D/g, '')
+    .slice(0, maxLen)
+}
 
 function OrderPage({ foods = [], cart, setCart }) {
   const navigate = useNavigate()
@@ -60,7 +67,7 @@ function OrderPage({ foods = [], cart, setCart }) {
     setDraft((prev) => ({
       ...prev,
       leaderName: prev.leaderName ?? prev.memberName ?? '',
-      phone: prev.phone ?? prev.regNo ?? '',
+      phone: digitsOnlyMax(prev.phone ?? prev.regNo ?? '', PHONE_LEN),
     }))
   }, [draft, setDraft])
 
@@ -165,6 +172,7 @@ function OrderPage({ foods = [], cart, setCart }) {
     const phone = String(draft?.phone ?? '').trim()
     if (!phone) nextErrors.phone = 'Phone number is required'
     else if (!PHONE_REGEX.test(phone)) nextErrors.phone = 'Phone number must contain digits only'
+    else if (phone.length !== PHONE_LEN) nextErrors.phone = `Phone number must be exactly ${PHONE_LEN} digits`
 
     const email = String(draft?.email ?? '').trim()
     if (!email) nextErrors.email = 'Email is required'
@@ -227,6 +235,34 @@ function OrderPage({ foods = [], cart, setCart }) {
     setErrors(nextErrors)
     if (Object.keys(nextErrors).length > 0) return
     setStep(2)
+  }
+
+  const onPhoneChange = (e) => {
+    const next = digitsOnlyMax(e.target.value, PHONE_LEN)
+    setDraft((p) => ({ ...p, phone: next }))
+    setErrors((prev) => {
+      if (!prev || typeof prev !== 'object' || !('phone' in prev)) return prev
+      const nextErrors = { ...prev }
+      delete nextErrors.phone
+      return nextErrors
+    })
+  }
+
+  const onPhonePaste = (e) => {
+    const pasted = e.clipboardData?.getData('text') ?? ''
+    const digits = String(pasted).replace(/\D/g, '')
+    if (digits.length > PHONE_LEN) {
+      e.preventDefault()
+      setErrors((prev) => ({
+        ...(prev && typeof prev === 'object' ? prev : {}),
+        phone: `Phone number must be exactly ${PHONE_LEN} digits`,
+      }))
+      return
+    }
+
+    // Force digits-only paste (no symbols/spaces) and cap to 10.
+    e.preventDefault()
+    setDraft((p) => ({ ...p, phone: digitsOnlyMax(digits, PHONE_LEN) }))
   }
 
   const submitOrder = async (e) => {
@@ -327,9 +363,12 @@ function OrderPage({ foods = [], cart, setCart }) {
                 <input
                   className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-[#2BAD98]"
                   value={draft.phone ?? ''}
-                  onChange={(e) => setDraft((p) => ({ ...p, phone: e.target.value }))}
+                  onChange={onPhoneChange}
+                  onPaste={onPhonePaste}
                   placeholder="e.g. 9876543210"
-                  inputMode="tel"
+                  inputMode="numeric"
+                  pattern="\d{10}"
+                  maxLength={10}
                 />
                 {errors.phone ? <span className="text-xs text-red-600">{errors.phone}</span> : null}
               </label>

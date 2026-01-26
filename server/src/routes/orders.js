@@ -28,7 +28,7 @@ const MAX_TOTAL_ITEMS_PER_ORDER = 10
 const KLU_EMAIL_DOMAIN = '@klu.ac.in'
 const NAME_REGEX = /^[A-Za-z ]+$/
 const TXN_REGEX = /^[A-Za-z0-9]+$/
-const PHONE_REGEX = /^\d+$/
+const PHONE_REGEX = /^\d{10}$/
 
 function getClientUserId(req) {
   const header = req.header('x-client-user-id')
@@ -144,7 +144,7 @@ ordersRouter.post('/', upload.single('paymentScreenshot'), async (req, res, next
     }
 
     if (!PHONE_REGEX.test(phone)) {
-      return res.status(400).json({ error: 'Phone number must contain digits only' })
+      return res.status(400).json({ error: 'Phone number must be exactly 10 digits (0-9 only)' })
     }
 
     if (!NAME_REGEX.test(leaderName)) {

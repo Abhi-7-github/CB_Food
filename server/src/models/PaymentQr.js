@@ -2,7 +2,8 @@ import mongoose from 'mongoose'
 
 const PaymentQrSchema = new mongoose.Schema(
   {
-    imageUrl: { type: String, required: true, trim: true },
+    // Created as empty while the Cloudinary upload runs in the background.
+    imageUrl: { type: String, default: '', trim: true },
     imagePublicId: { type: String, default: '' },
     isActive: { type: Boolean, default: false, index: true },
     uploadStatus: { type: String, enum: ['uploaded', 'pending', 'failed'], default: 'uploaded' },

@@ -132,6 +132,8 @@ adminRouter.get('/payment-qrs', requireAdmin, async (_req, res, next) => {
         id: String(q._id),
         imageUrl: q.imageUrl,
         isActive: Boolean(q.isActive),
+        uploadStatus: q.uploadStatus,
+        uploadError: q.uploadError,
         createdAt: q.createdAt,
         updatedAt: q.updatedAt,
       }))
@@ -216,6 +218,15 @@ adminRouter.patch('/payment-qrs/:id/active', requireAdmin, express.json(), async
     if (!id) return res.status(400).json({ error: 'payment qr id is required' })
     if (activeParsed === null) return res.status(400).json({ error: 'active must be true/false' })
 
+    if (activeParsed) {
+      const doc = await PaymentQr.findById(id).lean()
+      if (!doc) return res.status(404).json({ error: 'Payment QR not found' })
+      const hasImage = typeof doc.imageUrl === 'string' && doc.imageUrl.trim().length > 0
+      if (!hasImage || doc.uploadStatus !== 'uploaded') {
+        return res.status(400).json({ error: 'QR image is not ready yet. Please wait for upload to finish.' })
+      }
+    }
+
     let updated = null
     if (activeParsed) {
       updated = await setSingleActivePaymentQr(id)
@@ -229,6 +240,8 @@ adminRouter.patch('/payment-qrs/:id/active', requireAdmin, express.json(), async
       id: String(updated._id),
       imageUrl: updated.imageUrl,
       isActive: Boolean(updated.isActive),
+      uploadStatus: updated.uploadStatus,
+      uploadError: updated.uploadError,
       createdAt: updated.createdAt,
       updatedAt: updated.updatedAt,
     })
