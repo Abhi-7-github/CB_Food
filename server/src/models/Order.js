@@ -67,6 +67,10 @@ const OrderSchema = new mongoose.Schema(
     subtotal: { type: Number, required: true, min: 0 },
     payment: { type: PaymentSchema, required: true },
     decisionEmail: { type: DecisionEmailSchema, default: () => ({}) },
+    decisionEmailSent: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true }
 )

@@ -688,7 +688,12 @@ adminRouter.patch('/orders/:id/status', requireAdmin, express.json(), async (req
     // - exactly once when transitioning Placed -> Verified/Rejected
     if (shouldSendDecisionEmail) {
       runAfterResponse(res, 'send decision email', async () => {
-        await deliverDecisionEmailForOrder(updated._id)
+        try {
+          await deliverDecisionEmailForOrder(updated._id)
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.error('Background mail crash:', e)
+        }
       })
     }
   } catch (err) {

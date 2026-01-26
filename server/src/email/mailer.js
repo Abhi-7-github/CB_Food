@@ -538,3 +538,12 @@ export async function sendOrderRejectedEmail(order) {
 
   return { ok: true }
 }
+
+// Generic mail entrypoint used by the decision-email worker.
+// Only sends when the order is in a final decision state.
+export async function sendMail(order) {
+  const status = String(order?.status || '').trim()
+  if (status === 'Verified') return sendOrderVerifiedEmail(order)
+  if (status === 'Rejected') return sendOrderRejectedEmail(order)
+  return { ok: false, skipped: true, reason: 'NOT_A_FINAL_DECISION' }
+}

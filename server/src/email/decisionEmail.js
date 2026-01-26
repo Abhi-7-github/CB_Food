@@ -1,5 +1,5 @@
 import { Order } from '../models/Order.js'
-import { sendOrderRejectedEmail, sendOrderVerifiedEmail } from './mailer.js'
+import { sendMail } from './mailer.js'
 
 function asTrimmedString(value) {
   return String(value ?? '').trim()
@@ -17,10 +17,11 @@ export async function deliverDecisionEmailForOrder(orderId) {
   // If mail is disabled, do not consume the queue. Keep it queued for later.
   if (!isMailEnabled()) return
 
-  // Claim the send attempt (exactly-once per order).
-  const claimed = await Order.findOneAndUpdate(
+  // Prevent duplicates (atomic lock): only one worker can claim a given order.
+  const order = await Order.findOneAndUpdate(
     {
       _id: id,
+      decisionEmailSent: false,
       status: { $in: ['Verified', 'Rejected'] },
       'decisionEmail.status': { $in: ['queued', 'failed'] },
       'decisionEmail.type': { $in: ['Verified', 'Rejected'] },
@@ -33,80 +34,34 @@ export async function deliverDecisionEmailForOrder(orderId) {
       $inc: { 'decisionEmail.attempts': 1 },
     },
     { new: true }
-  ).lean()
+  )
 
-  if (!claimed) return
+  if (!order) return
 
-  const to = asTrimmedString(claimed?.team?.email)
-  if (!to) {
-    await Order.updateOne(
-      { _id: id },
-      {
-        $set: {
-          'decisionEmail.status': 'failed',
-          'decisionEmail.lastError': 'Missing recipient email',
-        },
-      }
-    )
-    return
-  }
+  // Prevent duplicates (secondary check; should be redundant with the query).
+  if (order.decisionEmailSent) return
 
   try {
-    if (claimed.status === 'Verified') {
-      const result = await sendOrderVerifiedEmail(claimed)
-      if (!result?.ok) {
-        await Order.updateOne(
-          { _id: id },
-          {
-            $set: {
-              'decisionEmail.status': 'queued',
-              'decisionEmail.lastError': asTrimmedString(result?.reason || 'Skipped'),
-            },
-          }
-        )
-        return
-      }
-    } else if (claimed.status === 'Rejected') {
-      const result = await sendOrderRejectedEmail(claimed)
-      if (!result?.ok) {
-        await Order.updateOne(
-          { _id: id },
-          {
-            $set: {
-              'decisionEmail.status': 'queued',
-              'decisionEmail.lastError': asTrimmedString(result?.reason || 'Skipped'),
-            },
-          }
-        )
-        return
-      }
-    } else {
+    const result = await sendMail(order)
+    if (!result?.ok) {
+      order.decisionEmail.status = 'queued'
+      order.decisionEmail.lastError = asTrimmedString(result?.reason || 'Skipped')
+      await order.save()
       return
     }
 
-    await Order.updateOne(
-      { _id: id },
-      {
-        $set: {
-          'decisionEmail.status': 'sent',
-          'decisionEmail.sentAt': new Date(),
-          'decisionEmail.lastError': '',
-        },
-      }
-    )
+    order.decisionEmailSent = true
+    order.decisionEmail.status = 'sent'
+    order.decisionEmail.sentAt = new Date()
+    order.decisionEmail.lastError = ''
+    await order.save()
   } catch (err) {
-    await Order.updateOne(
-      { _id: id },
-      {
-        $set: {
-          'decisionEmail.status': 'failed',
-          'decisionEmail.lastError': asTrimmedString(err?.message || err),
-        },
-      }
-    )
-
     // eslint-disable-next-line no-console
-    console.error('[mail] decision email failed:', err?.stack || err?.message || err)
+    console.error('MAIL FAILED:', err)
+
+    order.decisionEmail.status = 'failed'
+    order.decisionEmail.lastError = asTrimmedString(err?.message || err)
+    await order.save()
   }
 }
 
@@ -130,6 +85,7 @@ export function startDecisionEmailDispatcher() {
       const candidates = await Order.find(
         {
           status: { $in: ['Verified', 'Rejected'] },
+          decisionEmailSent: false,
           'decisionEmail.status': { $in: ['queued', 'failed'] },
           'decisionEmail.type': { $in: ['Verified', 'Rejected'] },
         },
