@@ -445,28 +445,41 @@ export function buildFinalDecisionEmailTemplate(params) {
 export async function sendOrderVerifiedEmail(order) {
   if (!isMailEnabled()) return { ok: false, skipped: true, reason: 'MAIL_DISABLED' }
 
-  const to = String(order?.team?.email || '').trim()
+  const baseOrder =
+    order && typeof order.toObject === 'function'
+      ? order.toObject({ virtuals: false, getters: false })
+      : order
+
+  const to = String(baseOrder?.team?.email || '').trim()
   if (!to) return { ok: false, skipped: true, reason: 'MISSING_TO' }
 
   const from = String(process.env.MAIL_FROM || process.env.SMTP_USER || '').trim() || undefined
   const { subject, html, text } = buildFinalDecisionEmailTemplate({
     paymentStatus: 'PAID',
-    ...order,
-    orderId: order?._id,
-    transactionId: order?.payment?.transactionId,
-    name: order?.team?.leaderName,
-    teamName: order?.team?.teamName,
+    ...baseOrder,
+    subtotal: baseOrder?.subtotal,
+    items: baseOrder?.items,
+    team: baseOrder?.team,
+    payment: baseOrder?.payment,
+    orderId: baseOrder?._id,
+    transactionId: baseOrder?.payment?.transactionId,
+    name: baseOrder?.team?.leaderName,
+    teamName: baseOrder?.team?.teamName,
   })
 
   const transporter = getTransporter()
-  const baseName = `CB-Food-Ticket-${safeFilenamePart(order?._id || 'order')}`
+  const baseName = `CB-Food-Ticket-${safeFilenamePart(baseOrder?._id || 'order')}`
   const svg = buildTicketSvg({
     paymentStatus: 'PAID',
-    ...order,
-    orderId: order?._id,
-    transactionId: order?.payment?.transactionId,
-    name: order?.team?.leaderName,
-    teamName: order?.team?.teamName,
+    ...baseOrder,
+    subtotal: baseOrder?.subtotal,
+    items: baseOrder?.items,
+    team: baseOrder?.team,
+    payment: baseOrder?.payment,
+    orderId: baseOrder?._id,
+    transactionId: baseOrder?.payment?.transactionId,
+    name: baseOrder?.team?.leaderName,
+    teamName: baseOrder?.team?.teamName,
   })
   const png = await renderTicketPng(svg)
 
@@ -493,30 +506,43 @@ export async function sendOrderVerifiedEmail(order) {
 export async function sendOrderRejectedEmail(order) {
   if (!isMailEnabled()) return { ok: false, skipped: true, reason: 'MAIL_DISABLED' }
 
-  const to = String(order?.team?.email || '').trim()
+  const baseOrder =
+    order && typeof order.toObject === 'function'
+      ? order.toObject({ virtuals: false, getters: false })
+      : order
+
+  const to = String(baseOrder?.team?.email || '').trim()
   if (!to) return { ok: false, skipped: true, reason: 'MISSING_TO' }
 
   const from = String(process.env.MAIL_FROM || process.env.SMTP_USER || '').trim() || undefined
   const { subject, html, text } = buildFinalDecisionEmailTemplate({
     paymentStatus: 'REJECTED',
-    ...order,
-    orderId: order?._id,
-    transactionId: order?.payment?.transactionId,
-    name: order?.team?.leaderName,
-    teamName: order?.team?.teamName,
-    reason: order?.rejectionReason,
+    ...baseOrder,
+    subtotal: baseOrder?.subtotal,
+    items: baseOrder?.items,
+    team: baseOrder?.team,
+    payment: baseOrder?.payment,
+    orderId: baseOrder?._id,
+    transactionId: baseOrder?.payment?.transactionId,
+    name: baseOrder?.team?.leaderName,
+    teamName: baseOrder?.team?.teamName,
+    reason: baseOrder?.rejectionReason,
   })
 
   const transporter = getTransporter()
-  const baseName = `CB-Food-Ticket-${safeFilenamePart(order?._id || 'order')}`
+  const baseName = `CB-Food-Ticket-${safeFilenamePart(baseOrder?._id || 'order')}`
   const svg = buildTicketSvg({
     paymentStatus: 'REJECTED',
-    ...order,
-    orderId: order?._id,
-    transactionId: order?.payment?.transactionId,
-    name: order?.team?.leaderName,
-    teamName: order?.team?.teamName,
-    reason: order?.rejectionReason,
+    ...baseOrder,
+    subtotal: baseOrder?.subtotal,
+    items: baseOrder?.items,
+    team: baseOrder?.team,
+    payment: baseOrder?.payment,
+    orderId: baseOrder?._id,
+    transactionId: baseOrder?.payment?.transactionId,
+    name: baseOrder?.team?.leaderName,
+    teamName: baseOrder?.team?.teamName,
+    reason: baseOrder?.rejectionReason,
   })
   const png = await renderTicketPng(svg)
 
