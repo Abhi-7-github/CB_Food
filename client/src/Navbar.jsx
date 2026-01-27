@@ -1,70 +1,95 @@
-import { useEffect, useMemo, useState } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
-import logo from './assets/EventLogo.jpeg'
-import cbKareLogo from './assets/CB-KARE.jpeg'
+import { useEffect, useMemo, useState } from "react";
+import { NavLink, useLocation } from "react-router-dom";
+import logo from "./assets/EventLogo.jpeg";
+import cbKareLogo from "./assets/CB-KARE.jpeg";
 
-export default function Navbar({ cartCount = 0, adminKey = '' }) {
-  const location = useLocation()
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+export default function Navbar({
+  cartCount = 0,
+  adminKey = "",
+  authUser = null,
+  onLogout,
+}) {
+  const location = useLocation();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const isAdminRoute = location.pathname === '/admin' || location.pathname.startsWith('/admin/')
+  const isAdminRoute =
+    location.pathname === "/admin" || location.pathname.startsWith("/admin/");
 
   const navItems = useMemo(() => {
     if (isAdminRoute) {
-      const authed = Boolean(String(adminKey ?? '').trim())
-      if (!authed) return []
+      const authed = Boolean(String(adminKey ?? "").trim());
+      if (!authed) return [];
       return [
-        { id: 'admin-foods', label: 'Create Food' },
-        { id: 'admin-manage', label: 'Foods List' },
-        { id: 'admin-payments', label: 'Verify Payments' },
-        { id: 'admin-qrcodes', label: 'Upload QRCode' },
-        { id: 'admin-accepted', label: 'Accepted Items' },
-      ]
+        { id: "admin-foods", label: "Create Food" },
+        { id: "admin-manage", label: "Foods List" },
+        { id: "admin-payments", label: "Verify Payments" },
+        { id: "admin-qrcodes", label: "Upload QRCode" },
+        { id: "admin-accepted", label: "Accepted Items" },
+      ];
     }
+
+    // Login-required app: show only Login until authenticated.
+    if (!authUser) return [{ id: "login", label: "Login" }];
 
     return [
-      { id: 'home', label: 'Home' },
-      { id: 'orders', label: 'Orders' },
-      { id: 'cart', label: 'Cart' },
-    ]
-  }, [adminKey, isAdminRoute])
+      { id: "home", label: "Home" },
+      { id: "orders", label: "Orders" },
+      { id: "cart", label: "Cart" },
+    ];
+  }, [adminKey, authUser, isAdminRoute]);
 
   const go = () => {
-    setMobileMenuOpen(false)
-  }
+    setMobileMenuOpen(false);
+  };
 
   useEffect(() => {
-    if (!mobileMenuOpen) return
-    const prevOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
+    if (!mobileMenuOpen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     return () => {
-      document.body.style.overflow = prevOverflow
-    }
-  }, [mobileMenuOpen])
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [mobileMenuOpen]);
 
   const toPath = (id) => {
-    if (id === 'admin-foods') return '/admin/foods'
-    if (id === 'admin-manage') return '/admin/manage'
-    if (id === 'admin-payments') return '/admin/payments'
-    if (id === 'admin-qrcodes') return '/admin/qrcodes'
-    if (id === 'admin-accepted') return '/admin/accepted'
-    if (id === 'home') return '/'
-    if (id === 'orders') return '/orders'
-    return '/cart'
-  }
+    if (id === "admin-foods") return "/admin/foods";
+    if (id === "admin-manage") return "/admin/manage";
+    if (id === "admin-payments") return "/admin/payments";
+    if (id === "admin-qrcodes") return "/admin/qrcodes";
+    if (id === "admin-accepted") return "/admin/accepted";
+    if (id === "home") return "/";
+    if (id === "orders") return "/orders";
+    if (id === "login") return "/login";
+    return "/cart";
+  };
 
   return (
     <>
       <nav className="sticky top-0 z-40 border-b border-amber-200 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
-          <NavLink to={isAdminRoute ? '/admin/foods' : '/'} className="flex items-center gap-3" aria-label="Home">
+          <NavLink
+            to={isAdminRoute ? "/admin/foods" : "/"}
+            className="flex items-center gap-3"
+            aria-label="Home"
+          >
             <span className="grid h-10 w-10 place-items-center overflow-hidden rounded-full bg-black ring-1 ring-slate-200">
-              <img src={cbKareLogo} alt="CB-KARE" className="h-full w-full object-cover" />
+              <img
+                src={cbKareLogo}
+                alt="CB-KARE"
+                className="h-full w-full object-cover"
+              />
             </span>
-            <img src={logo} alt="Innovate Kare 2.0" className="h-9 w-auto md:h-10" />
+            <img
+              src={logo}
+              alt="Innovate Kare 2.0"
+              className="h-9 w-auto md:h-10"
+            />
           </NavLink>
 
-          <div className="hidden items-center gap-2 md:flex" aria-label="Primary navigation">
+          <div
+            className="hidden items-center gap-2 md:flex"
+            aria-label="Primary navigation"
+          >
             {navItems.map((item) => {
               return (
                 <NavLink
@@ -74,24 +99,46 @@ export default function Navbar({ cartCount = 0, adminKey = '' }) {
                   className={({ isActive }) =>
                     isAdminRoute
                       ? isActive
-                        ? 'rounded-xl bg-[#FF2D87] px-4 py-2 text-sm font-semibold text-white'
-                        : 'rounded-xl px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-amber-50'
+                        ? "rounded-xl bg-[#FF2D87] px-4 py-2 text-sm font-semibold text-white"
+                        : "rounded-xl px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-amber-50"
                       : isActive
-                        ? 'rounded-full bg-[#FF2D87] px-5 py-2 text-xs font-semibold text-white'
-                        : 'rounded-full px-5 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100'
+                        ? "rounded-full bg-[#FF2D87] px-5 py-2 text-xs font-semibold text-white"
+                        : "rounded-full px-5 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100"
                   }
                 >
                   <span className="inline-flex items-center gap-2">
                     {item.label}
-                    {item.id === 'cart' && cartCount > 0 ? (
+                    {item.id === "cart" && cartCount > 0 ? (
                       <span className="rounded-full bg-[#2BAD98] px-2 py-0.5 text-[11px] font-semibold text-white">
                         {cartCount}
                       </span>
                     ) : null}
                   </span>
                 </NavLink>
-              )
+              );
             })}
+
+            {!isAdminRoute ? (
+              <div className="ml-2 inline-flex items-center gap-2">
+                {authUser ? (
+                  <button
+                    type="button"
+                    className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                    onClick={() =>
+                      typeof onLogout === "function" ? onLogout() : null
+                    }
+                  >
+                    Logout
+                  </button>
+                ) : null}
+
+                {authUser ? (
+                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                    {String(authUser.teamName || "User")}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           <button
@@ -108,7 +155,11 @@ export default function Navbar({ cartCount = 0, adminKey = '' }) {
       </nav>
 
       {mobileMenuOpen ? (
-        <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true">
+        <div
+          className="fixed inset-0 z-50 md:hidden"
+          role="dialog"
+          aria-modal="true"
+        >
           <button
             type="button"
             className="absolute inset-0 bg-slate-900/30"
@@ -143,29 +194,48 @@ export default function Navbar({ cartCount = 0, adminKey = '' }) {
                       className={({ isActive }) =>
                         isAdminRoute
                           ? isActive
-                            ? 'rounded-xl bg-[#FF2D87] px-4 py-2 text-left text-sm font-semibold text-white'
-                            : 'rounded-xl px-4 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-amber-50'
+                            ? "rounded-xl bg-[#FF2D87] px-4 py-2 text-left text-sm font-semibold text-white"
+                            : "rounded-xl px-4 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-amber-50"
                           : isActive
-                            ? 'rounded-xl bg-[#FF2D87] px-4 py-2 text-left text-sm font-semibold text-white'
-                            : 'rounded-xl px-4 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-100'
+                            ? "rounded-xl bg-[#FF2D87] px-4 py-2 text-left text-sm font-semibold text-white"
+                            : "rounded-xl px-4 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-100"
                       }
                     >
                       <span className="inline-flex items-center gap-2">
                         {item.label}
-                        {item.id === 'cart' && cartCount > 0 ? (
+                        {item.id === "cart" && cartCount > 0 ? (
                           <span className="rounded-full bg-[#2BAD98] px-2 py-0.5 text-[11px] font-semibold text-white">
                             {cartCount}
                           </span>
                         ) : null}
                       </span>
                     </NavLink>
-                  )
+                  );
                 })}
+
+                {!isAdminRoute && authUser ? (
+                  <>
+                    <button
+                      type="button"
+                      className="mt-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                      onClick={() => {
+                        go();
+                        if (typeof onLogout === "function") onLogout();
+                      }}
+                    >
+                      Logout
+                    </button>
+
+                    <div className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-left text-sm font-semibold text-slate-700">
+                      {String(authUser.teamName || "User")}
+                    </div>
+                  </>
+                ) : null}
               </div>
             </div>
           </aside>
         </div>
       ) : null}
     </>
-  )
+  );
 }

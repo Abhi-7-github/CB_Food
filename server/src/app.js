@@ -7,8 +7,10 @@ import { foodsRouter } from "./routes/foods.js";
 import { ordersRouter } from "./routes/orders.js";
 import { paymentQrsRouter } from "./routes/paymentQrs.js";
 import { adminRouter } from "./routes/admin.js";
+import { authRouter } from "./routes/auth.js";
+import { userRouter } from "./routes/userData.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
-import { guestSessionMiddleware } from "./middleware/guestSessionMiddleware.js";
+import { optionalUser, requireUser } from "./middleware/optionalUser.js";
 import { addPublicSseClient } from "./realtime/publicSse.js";
 
 export function createApp() {
@@ -44,8 +46,9 @@ export function createApp() {
 
   app.use(cors(corsOptions));
 
-  // Establish/refresh guest session cookie for every request (no login).
-  app.use(guestSessionMiddleware);
+  // Attach req.user when Authorization: Bearer ... is present.
+  // Invalid/expired tokens are treated as unauthenticated.
+  app.use(optionalUser);
 
   app.use(express.json({ limit: "1mb" }));
 
@@ -78,14 +81,18 @@ export function createApp() {
     res.json({ ok: true, service: "cb-kare-food-portal-server" });
   });
 
-  // Public SSE stream for client-side live updates.
-  app.get("/api/stream", (req, res) => {
+  // Auth endpoints stay public.
+  app.use("/api/auth", authRouter);
+
+  // SSE stream for client-side live updates (requires login; pass token via ?token=...)
+  app.get("/api/stream", requireUser, (req, res) => {
     addPublicSseClient(req, res);
   });
 
-  app.use("/api/foods", foodsRouter);
+  app.use("/api/foods", requireUser, foodsRouter);
   app.use("/api/orders", ordersRouter);
-  app.use("/api/payment-qrs", paymentQrsRouter);
+  app.use("/api/payment-qrs", requireUser, paymentQrsRouter);
+  app.use("/api/user", userRouter);
   app.use("/api/admin", adminRouter);
 
   app.use(notFound);

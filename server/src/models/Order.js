@@ -1,4 +1,4 @@
-import mongoose from 'mongoose'
+import mongoose from "mongoose";
 
 const OrderItemSchema = new mongoose.Schema(
   {
@@ -7,8 +7,8 @@ const OrderItemSchema = new mongoose.Schema(
     price: { type: Number, required: true, min: 0 },
     quantity: { type: Number, required: true, min: 1 },
   },
-  { _id: false }
-)
+  { _id: false },
+);
 
 const TeamSchema = new mongoose.Schema(
   {
@@ -20,29 +20,29 @@ const TeamSchema = new mongoose.Schema(
       trim: true,
       minlength: 10,
       maxlength: 10,
-      match: [/^\d{10}$/, 'Phone number must be exactly 10 digits'],
+      match: [/^\d{10}$/, "Phone number must be exactly 10 digits"],
     },
     email: { type: String, required: true, trim: true },
   },
-  { _id: false }
-)
+  { _id: false },
+);
 
 const PaymentSchema = new mongoose.Schema(
   {
-    method: { type: String, enum: ['QR'], default: 'QR' },
+    method: { type: String, enum: ["QR"], default: "QR" },
     transactionId: { type: String, required: true, trim: true },
-    screenshotUrl: { type: String, default: '' },
-    screenshotPublicId: { type: String, default: '' },
-    screenshotName: { type: String, default: '' },
+    screenshotUrl: { type: String, default: "" },
+    screenshotPublicId: { type: String, default: "" },
+    screenshotName: { type: String, default: "" },
     uploadStatus: {
       type: String,
-      enum: ['pending', 'uploaded', 'failed'],
-      default: 'uploaded',
+      enum: ["pending", "uploaded", "failed"],
+      default: "uploaded",
     },
-    uploadError: { type: String, default: '' },
+    uploadError: { type: String, default: "" },
   },
-  { _id: false }
-)
+  { _id: false },
+);
 
 const DecisionEmailSchema = new mongoose.Schema(
   {
@@ -50,24 +50,39 @@ const DecisionEmailSchema = new mongoose.Schema(
     // - never send on create
     // - send exactly once when admin finalizes to Verified or Rejected
     // - do not send for Placed/Delivered
-    type: { type: String, enum: ['', 'Verified', 'Rejected'], default: '' },
-    status: { type: String, enum: ['none', 'queued', 'sending', 'sent', 'failed'], default: 'none' },
+    type: { type: String, enum: ["", "Verified", "Rejected"], default: "" },
+    status: {
+      type: String,
+      enum: ["none", "queued", "sending", "sent", "failed"],
+      default: "none",
+    },
     attempts: { type: Number, default: 0 },
-    lastError: { type: String, default: '' },
+    lastError: { type: String, default: "" },
     queuedAt: { type: Date },
     lastAttemptAt: { type: Date },
     sentAt: { type: Date },
   },
-  { _id: false }
-)
+  { _id: false },
+);
 
 const OrderSchema = new mongoose.Schema(
   {
-    clientUserId: { type: String, required: true, index: true },
+    clientUserId: { type: String, default: "", index: true },
+    // When user is logged in, we also store an accountKey so they can retrieve orders across devices.
+    accountKey: { type: String, default: "", index: true },
     // Enforces case-insensitive uniqueness for payment.transactionId
-    transactionIdNormalized: { type: String, required: true, unique: true, index: true },
-    status: { type: String, enum: ['Placed', 'Verified', 'Rejected', 'Delivered'], default: 'Placed' },
-    rejectionReason: { type: String, default: '' },
+    transactionIdNormalized: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+    },
+    status: {
+      type: String,
+      enum: ["Placed", "Verified", "Rejected", "Delivered"],
+      default: "Placed",
+    },
+    rejectionReason: { type: String, default: "" },
     team: { type: TeamSchema, required: true },
     items: { type: [OrderItemSchema], default: [] },
     totalItems: { type: Number, required: true, min: 0 },
@@ -79,7 +94,7 @@ const OrderSchema = new mongoose.Schema(
       default: false,
     },
   },
-  { timestamps: true }
-)
+  { timestamps: true },
+);
 
-export const Order = mongoose.model('Order', OrderSchema)
+export const Order = mongoose.model("Order", OrderSchema);
