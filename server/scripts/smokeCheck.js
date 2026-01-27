@@ -1,139 +1,212 @@
-import request from 'supertest'
-import { MongoMemoryServer } from 'mongodb-memory-server'
+import request from "supertest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { MongoMemoryServer } from "mongodb-memory-server";
 
-import { createApp } from '../src/app.js'
-import { connectDb } from '../src/config/db.js'
-import { FoodItem } from '../src/models/FoodItem.js'
+import { createApp } from "../src/app.js";
+import { connectDb } from "../src/config/db.js";
+import { FoodItem } from "../src/models/FoodItem.js";
 
 async function run() {
-  process.env.USE_FAKE_CLOUDINARY = 'true'
-  process.env.ADMIN_API_KEY = 'test-admin-key'
+  process.env.USE_FAKE_CLOUDINARY = "true";
+  process.env.ADMIN_API_KEY = "test-admin-key";
 
-  const mongod = await MongoMemoryServer.create()
-  const uri = mongod.getUri()
+  // Provide a temporary USERS_FILE for login-required flows
+  const usersFile = path.join(
+    os.tmpdir(),
+    `cb-food-smoke-users-${Date.now()}.json`,
+  );
+  await fs.writeFile(
+    usersFile,
+    JSON.stringify([{ teamName: "Smoke Team", password: "smoke123" }], null, 2),
+    "utf8",
+  );
+  process.env.USERS_FILE = usersFile;
 
-  const conn = await connectDb(uri)
+  const mongod = await MongoMemoryServer.create();
+  const uri = mongod.getUri();
+
+  const conn = await connectDb(uri);
 
   // Seed a couple of foods
   await FoodItem.create([
     {
-      clientId: 'veg-biryani',
-      name: 'Veg Biryani',
-      description: 'Fragrant basmati rice with veggies.',
+      clientId: "veg-biryani",
+      name: "Veg Biryani",
+      description: "Fragrant basmati rice with veggies.",
       isVeg: true,
       price: 129,
-      imageUrl: '',
+      imageUrl: "",
     },
     {
-      clientId: 'chicken-biryani',
-      name: 'Chicken Biryani',
-      description: 'Classic spiced chicken biryani.',
+      clientId: "chicken-biryani",
+      name: "Chicken Biryani",
+      description: "Classic spiced chicken biryani.",
       isVeg: false,
       price: 199,
-      imageUrl: '',
+      imageUrl: "",
     },
-  ])
+  ]);
 
-  const app = createApp()
+  const app = createApp();
 
   // /health
-  const health = await request(app).get('/health')
+  const health = await request(app).get("/health");
   if (health.status !== 200 || health.body?.ok !== true) {
-    throw new Error(`/health failed: ${health.status} ${JSON.stringify(health.body)}`)
+    throw new Error(
+      `/health failed: ${health.status} ${JSON.stringify(health.body)}`,
+    );
   }
 
+  // Login (required)
+  const login = await request(app)
+    .post("/api/auth/login")
+    .send({ teamName: "Smoke Team", password: "smoke123" });
+
+  if (login.status !== 200 || !login.body?.token) {
+    throw new Error(
+      `/api/auth/login failed: ${login.status} ${JSON.stringify(login.body)}`,
+    );
+  }
+
+  const token = String(login.body.token);
+
   // GET /api/foods
-  const foods = await request(app).get('/api/foods')
-  if (foods.status !== 200 || !Array.isArray(foods.body) || foods.body.length < 2) {
-    throw new Error(`/api/foods failed: ${foods.status} ${JSON.stringify(foods.body)}`)
+  const foods = await request(app)
+    .get("/api/foods")
+    .set("authorization", `Bearer ${token}`);
+  if (
+    foods.status !== 200 ||
+    !Array.isArray(foods.body) ||
+    foods.body.length < 2
+  ) {
+    throw new Error(
+      `/api/foods failed: ${foods.status} ${JSON.stringify(foods.body)}`,
+    );
   }
 
   // POST /api/admin/foods
   const adminCreate = await request(app)
-    .post('/api/admin/foods')
-    .set('x-admin-key', 'test-admin-key')
-    .field('name', 'Admin Added Item')
-    .field('description', 'Created via admin route')
-    .field('isVeg', 'true')
-    .field('price', '49')
-    .attach('image', Buffer.from('fake-image-bytes'), 'food.png')
+    .post("/api/admin/foods")
+    .set("x-admin-key", "test-admin-key")
+    .field("name", "Admin Added Item")
+    .field("description", "Created via admin route")
+    .field("isVeg", "true")
+    .field("price", "49")
+    .attach("image", Buffer.from("fake-image-bytes"), "food.png");
 
-  if (adminCreate.status !== 201 || adminCreate.body?.id !== 'admin-added-item') {
-    throw new Error(`/api/admin/foods POST failed: ${adminCreate.status} ${JSON.stringify(adminCreate.body)}`)
+  if (
+    adminCreate.status !== 201 ||
+    adminCreate.body?.id !== "admin-added-item"
+  ) {
+    throw new Error(
+      `/api/admin/foods POST failed: ${adminCreate.status} ${JSON.stringify(adminCreate.body)}`,
+    );
   }
 
-  const foodsAfterAdmin = await request(app).get('/api/foods')
+  const foodsAfterAdmin = await request(app)
+    .get("/api/foods")
+    .set("authorization", `Bearer ${token}`);
   if (
     foodsAfterAdmin.status !== 200 ||
     !Array.isArray(foodsAfterAdmin.body) ||
-    !foodsAfterAdmin.body.some((f) => f.id === 'admin-added-item')
+    !foodsAfterAdmin.body.some((f) => f.id === "admin-added-item")
   ) {
-    throw new Error(`/api/foods after admin create failed: ${foodsAfterAdmin.status} ${JSON.stringify(foodsAfterAdmin.body)}`)
+    throw new Error(
+      `/api/foods after admin create failed: ${foodsAfterAdmin.status} ${JSON.stringify(foodsAfterAdmin.body)}`,
+    );
   }
 
   // GET /api/orders
-  const orders0 = await request(app).get('/api/orders').set('x-client-user-id', 'smoke-user-1')
+  const orders0 = await request(app)
+    .get("/api/orders")
+    .set("authorization", `Bearer ${token}`);
   if (orders0.status !== 200 || !Array.isArray(orders0.body)) {
-    throw new Error(`/api/orders GET failed: ${orders0.status} ${JSON.stringify(orders0.body)}`)
+    throw new Error(
+      `/api/orders GET failed: ${orders0.status} ${JSON.stringify(orders0.body)}`,
+    );
   }
 
   // POST /api/orders
   const items = [
-    { id: 'veg-biryani', name: 'Veg Biryani', price: 129, quantity: 2 },
-    { id: 'chicken-biryani', name: 'Chicken Biryani', price: 199, quantity: 1 },
-  ]
-  const subtotal = 129 * 2 + 199 * 1
-  const totalItems = 3
+    { id: "veg-biryani", name: "Veg Biryani", price: 129, quantity: 2 },
+    { id: "chicken-biryani", name: "Chicken Biryani", price: 199, quantity: 1 },
+  ];
+  const subtotal = 129 * 2 + 199 * 1;
+  const totalItems = 3;
 
   const post = await request(app)
-    .post('/api/orders')
-    .set('x-client-user-id', 'smoke-user-1')
-    .field('teamName', 'CB Warriors')
-    .field('leaderName', 'Leader Name')
-    .field('phone', '9876543210')
-    .field('email', 'leader@klu.ac.in')
-    .field('transactionId', 'TXN123456')
-    .field('items', JSON.stringify(items))
-    .field('subtotal', String(subtotal))
-    .field('totalItems', String(totalItems))
-    .attach('paymentScreenshot', Buffer.from('fake-image-bytes'), 'payment.png')
+    .post("/api/orders")
+    .set("authorization", `Bearer ${token}`)
+    .field("teamName", "CB Warriors")
+    .field("leaderName", "Leader Name")
+    .field("phone", "9876543210")
+    .field("email", "leader@klu.ac.in")
+    .field("transactionId", "TXN123456")
+    .field("items", JSON.stringify(items))
+    .field("subtotal", String(subtotal))
+    .field("totalItems", String(totalItems))
+    .attach(
+      "paymentScreenshot",
+      Buffer.from("fake-image-bytes"),
+      "payment.png",
+    );
 
   if (post.status !== 202 || !post.body?.id) {
-    throw new Error(`/api/orders POST failed: ${post.status} ${JSON.stringify(post.body)}`)
+    throw new Error(
+      `/api/orders POST failed: ${post.status} ${JSON.stringify(post.body)}`,
+    );
   }
 
   // GET /api/orders should include the new order
-  const orders1 = await request(app).get('/api/orders').set('x-client-user-id', 'smoke-user-1')
-  if (orders1.status !== 200 || !Array.isArray(orders1.body) || orders1.body.length < 1) {
-    throw new Error(`/api/orders GET after POST failed: ${orders1.status} ${JSON.stringify(orders1.body)}`)
+  const orders1 = await request(app)
+    .get("/api/orders")
+    .set("authorization", `Bearer ${token}`);
+  if (
+    orders1.status !== 200 ||
+    !Array.isArray(orders1.body) ||
+    orders1.body.length < 1
+  ) {
+    throw new Error(
+      `/api/orders GET after POST failed: ${orders1.status} ${JSON.stringify(orders1.body)}`,
+    );
   }
 
-  const created = orders1.body.find((o) => String(o.id) === String(post.body.id))
+  const created = orders1.body.find(
+    (o) => String(o.id) === String(post.body.id),
+  );
   if (!created) {
-    throw new Error(`/api/orders GET did not include created order: ${JSON.stringify({ createdId: post.body.id, ordersCount: orders1.body.length })}`)
+    throw new Error(
+      `/api/orders GET did not include created order: ${JSON.stringify({ createdId: post.body.id, ordersCount: orders1.body.length })}`,
+    );
   }
 
-  const st = String(created?.payment?.uploadStatus || '')
-  if (st && !['pending', 'uploaded', 'failed'].includes(st)) {
-    throw new Error(`/api/orders GET unexpected uploadStatus: ${JSON.stringify(created?.payment)}`)
+  const st = String(created?.payment?.uploadStatus || "");
+  if (st && !["pending", "uploaded", "failed"].includes(st)) {
+    throw new Error(
+      `/api/orders GET unexpected uploadStatus: ${JSON.stringify(created?.payment)}`,
+    );
   }
 
-  if (st === 'uploaded' && !created?.payment?.screenshotUrl) {
-    throw new Error(`/api/orders GET uploaded but missing screenshotUrl: ${JSON.stringify(created?.payment)}`)
+  if (st === "uploaded" && !created?.payment?.screenshotUrl) {
+    throw new Error(
+      `/api/orders GET uploaded but missing screenshotUrl: ${JSON.stringify(created?.payment)}`,
+    );
   }
 
-  console.log('OK: /health')
-  console.log('OK: GET /api/foods')
-  console.log('OK: POST /api/admin/foods (multipart + auth + fake cloudinary)')
-  console.log('OK: GET /api/orders')
-  console.log('OK: POST /api/orders (multipart + fake cloudinary)')
+  console.log("OK: /health");
+  console.log("OK: GET /api/foods");
+  console.log("OK: POST /api/admin/foods (multipart + auth + fake cloudinary)");
+  console.log("OK: GET /api/orders");
+  console.log("OK: POST /api/orders (multipart + fake cloudinary)");
 
-  await conn.close()
-  await mongod.stop()
+  await conn.close();
+  await mongod.stop();
 }
 
 run().catch((err) => {
-  console.error('Smoke check FAILED')
-  console.error(err)
-  process.exit(1)
-})
+  console.error("Smoke check FAILED");
+  console.error(err);
+  process.exit(1);
+});

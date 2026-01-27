@@ -1,0 +1,18 @@
+[
+  {
+    "teamName": "Demo Team",
+    "password": "demo123"
+  },
+  {
+    "teamName": "Team Alpha",
+    "password": "alpha123"
+  },
+  {
+    "teamName": "Team Beta",
+    "password": "beta123"
+  },
+  {
+    "teamName": "CB Warriors",
+    "password": "warriors123"
+  }
+]
