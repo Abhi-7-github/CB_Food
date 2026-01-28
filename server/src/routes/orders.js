@@ -1,15 +1,53 @@
 import express from "express";
 import multer from "multer";
+import os from "node:os";
+import path from "node:path";
+import crypto from "node:crypto";
+import { unlink } from "node:fs/promises";
 import { getCloudinary } from "../config/cloudinary.js";
 import { Order } from "../models/Order.js";
 import { broadcastAdminEvent } from "../realtime/adminSse.js";
 import { broadcastPublicEvent } from "../realtime/publicSse.js";
 import { isAdminRequest } from "../middleware/requireAdmin.js";
+import { updateFoodStats } from "../utils/updateFoodStats.js";
+import { requireUser } from "../middleware/optionalUser.js";
 
 export const ordersRouter = express.Router();
 
+const MAX_PARALLEL_CLOUDINARY_UPLOADS = Number(
+  process.env.MAX_PARALLEL_CLOUDINARY_UPLOADS || 8,
+);
+let activeCloudinaryUploads = 0;
+const cloudinaryUploadWaiters = [];
+
+async function withCloudinaryUploadSlot(fn) {
+  if (activeCloudinaryUploads >= MAX_PARALLEL_CLOUDINARY_UPLOADS) {
+    await new Promise((resolve) => cloudinaryUploadWaiters.push(resolve));
+  }
+
+  activeCloudinaryUploads += 1;
+  try {
+    return await fn();
+  } finally {
+    activeCloudinaryUploads -= 1;
+    const next = cloudinaryUploadWaiters.shift();
+    if (typeof next === "function") next();
+  }
+}
+
 const upload = multer({
-  storage: multer.memoryStorage(),
+  // Disk storage avoids buffering 10MB*concurrency into RAM.
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, os.tmpdir()),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(String(file?.originalname || ""));
+      const safeExt = ext && ext.length <= 10 ? ext : "";
+      cb(
+        null,
+        `cb-food-${Date.now()}-${crypto.randomUUID()}${safeExt}`,
+      );
+    },
+  }),
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB
   },
@@ -48,6 +86,16 @@ async function uploadToCloudinaryStream({ buffer, folder }) {
 
     stream.end(buffer);
   });
+}
+
+async function uploadToCloudinaryFile({ filePath, folder }) {
+  const cloudinary = getCloudinary();
+  const result = await cloudinary.uploader.upload(filePath, {
+    folder,
+    resource_type: "image",
+  });
+
+  return { url: result.secure_url, publicId: result.public_id };
 }
 
 // GET /api/orders
@@ -138,6 +186,8 @@ ordersRouter.get("/transaction-id-available", async (req, res, next) => {
 // file: paymentScreenshot
 ordersRouter.post(
   "/",
+  // Authenticate before multer buffers the upload into memory.
+  requireUser,
   upload.single("paymentScreenshot"),
   async (req, res, next) => {
     try {
@@ -195,6 +245,11 @@ ordersRouter.post(
 
       if (!req.file) {
         return res.status(400).json({ error: "paymentScreenshot is required" });
+      }
+
+      const uploadedFilePath = String(req.file.path || "");
+      if (!uploadedFilePath) {
+        return res.status(400).json({ error: "Upload failed. Please try again." });
       }
 
       const transactionIdNormalized = transactionId.toLowerCase();
@@ -298,6 +353,12 @@ ordersRouter.post(
         totalItems: order.totalItems,
       };
 
+      // Update food stats for bestseller calculation
+      updateFoodStats(order).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[stats] Failed to update food stats:', err?.message || err)
+      })
+
       broadcastAdminEvent("orderCreated", createdPayload);
 
       // Let clients refresh their own orders without causing every connected user to refetch.
@@ -318,7 +379,9 @@ ordersRouter.post(
 
       // Upload screenshot asynchronously so high concurrency doesn't block request latency.
       const folder = process.env.CLOUDINARY_FOLDER || "cb-kare-food-portal";
-      uploadToCloudinaryStream({ buffer: req.file.buffer, folder })
+      withCloudinaryUploadSlot(() =>
+        uploadToCloudinaryFile({ filePath: uploadedFilePath, folder }),
+      )
         .then(async (uploaded) => {
           await Order.updateOne(
             { _id: order._id },
@@ -361,6 +424,9 @@ ordersRouter.post(
               uploadError: asTrimmedString(err?.message || "Upload failed"),
             },
           });
+        })
+        .finally(() => {
+          unlink(uploadedFilePath).catch(() => {});
         });
 
       res.status(202).json(createdPayload);

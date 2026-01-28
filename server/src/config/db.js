@@ -22,8 +22,13 @@ export async function connectDb(mongoUri) {
     console.error('[db] error', err)
   })
 
+  const isProd = process.env.NODE_ENV === 'production'
+
   await mongoose.connect(mongoUri, {
-    autoIndex: true,
+    autoIndex: !isProd,
+    maxPoolSize: Number(process.env.MONGO_MAX_POOL_SIZE || 50),
+    minPoolSize: Number(process.env.MONGO_MIN_POOL_SIZE || 5),
+    maxIdleTimeMS: Number(process.env.MONGO_MAX_IDLE_TIME_MS || 60_000),
     serverSelectionTimeoutMS: Number(process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS || 10_000),
     connectTimeoutMS: Number(process.env.MONGO_CONNECT_TIMEOUT_MS || 10_000),
   })

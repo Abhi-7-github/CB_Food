@@ -32,7 +32,6 @@ export default function Login({
 
   const [existing, setExisting] = useState(() => getStoredAuth());
   const [teamName, setTeamName] = useState("");
-  const [password, setPassword] = useState("");
 
   const [status, setStatus] = useState({ state: "idle", message: "" });
 
@@ -75,19 +74,18 @@ export default function Login({
     e.preventDefault();
 
     const tn = String(teamName || "").trim();
-    const pw = String(password || "").trim();
 
-    if (!tn || !pw) {
+    if (!tn) {
       setStatus({
         state: "error",
-        message: "Enter your team name and password.",
+        message: "Enter your team name.",
       });
       return;
     }
 
     try {
       setStatus({ state: "loading", message: "Logging in…" });
-      const res = await loginUser({ teamName: tn, password: pw });
+      const res = await loginUser({ teamName: tn });
       const token = String(res?.token || "");
       const user = safeObj(res?.user);
 
@@ -148,7 +146,7 @@ export default function Login({
                   <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-[#2BAD98] ring-1 ring-amber-200">
                     ✓
                   </span>
-                  <span>Use the team name and password given to you</span>
+                  <span>Use your team name to sign in</span>
                 </div>
                 <div className="flex items-start gap-2">
                   <span className="mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-[#2BAD98] ring-1 ring-amber-200">
@@ -175,7 +173,7 @@ export default function Login({
                     Login
                   </div>
                   <div className="mt-1 text-xs text-slate-600">
-                    Use the username and password given to you.
+                    Enter your team name to sign in.
                   </div>
                 </div>
                 <button
@@ -228,21 +226,6 @@ export default function Login({
                       className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-amber-300 focus:ring-2 focus:ring-amber-100"
                       placeholder="Enter team name"
                       autoComplete="username"
-                      disabled={status.state === "loading"}
-                    />
-                  </label>
-
-                  <label className="grid gap-1">
-                    <span className="text-xs font-semibold text-slate-700">
-                      Password
-                    </span>
-                    <input
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      type="password"
-                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-amber-300 focus:ring-2 focus:ring-amber-100"
-                      placeholder="••••••••"
-                      autoComplete="current-password"
                       disabled={status.state === "loading"}
                     />
                   </label>

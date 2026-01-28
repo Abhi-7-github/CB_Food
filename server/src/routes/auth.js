@@ -33,27 +33,25 @@ async function passwordMatches(storedPassword, providedPassword) {
 }
 
 // POST /api/auth/login
-// body: { teamName, password }
+// body: { teamName }
 authRouter.post("/login", async (req, res, next) => {
   try {
     const identifier = safeString(req.body?.teamName || req.body?.identifier);
-    const password = safeString(req.body?.password);
 
-    if (!identifier || !password) {
+    if (!identifier) {
       return res
         .status(400)
-        .json({ error: "Team name and password are required." });
+        .json({ error: "Team name is required." });
     }
 
     const users = await loadUsers();
     const found = findUserByIdentifier(users, identifier);
 
-    const ok = await passwordMatches(found?.password, password);
-    if (!ok) {
+    if (!found) {
       // Do not leak whether identifier exists.
       return res
         .status(401)
-        .json({ error: "Incorrect team name or password." });
+        .json({ error: "Team not found." });
     }
 
     const u = publicUser(found);
