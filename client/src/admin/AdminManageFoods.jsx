@@ -238,7 +238,7 @@ export default function AdminManageFoods({ adminKey, onFoodsChanged }) {
                         View Image
                       </a>
                     ) : (
-                      <div className="mt-2 text-xs text-slate-500">No image</div>
+                      <div className="mt-2 text-xs text-slate-500">No Image</div>
                     )}
 
                     <div className="mt-3 flex flex-wrap gap-2">
