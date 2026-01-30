@@ -39,7 +39,7 @@ export default function AdminPage({ adminKey, setAdminKey, onFoodsChanged }) {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold">Admin</h1>
-          <p className="mt-1 text-sm text-slate-600">Anna Food Add chey</p>
+          <p className="mt-1 text-sm text-slate-600">INNOVATE KARE 2.0</p>
         </div>
       </div>
 
